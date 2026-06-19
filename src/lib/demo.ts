@@ -11,14 +11,3 @@ export const PRODUCT_IDS = {
   butterNaan: "a2000000-0000-4000-8000-000000000004",
   mangoLassi: "a2000000-0000-4000-8000-000000000005",
 } as const;
-
-/** Exact menu name → product UUID (for lowercase exact-match in UI) */
-export const PRODUCT_BY_NAME: Record<string, string> = {
-  "Rajma Chawal": PRODUCT_IDS.rajmaChawal,
-  "Dal Fry": PRODUCT_IDS.dalFry,
-  "Paneer Butter Masala": PRODUCT_IDS.paneerButterMasala,
-  "Butter Naan": PRODUCT_IDS.butterNaan,
-  "Mango Lassi": PRODUCT_IDS.mangoLassi,
-};
-
-export const DEMO_MENU_NAMES = Object.keys(PRODUCT_BY_NAME);
