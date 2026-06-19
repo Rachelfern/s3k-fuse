@@ -18,14 +18,19 @@ I can help you:
 
 Type a message to get started.`;
 
-export const initialMessages: ChatMessage[] = [
-  {
-    id: "msg-welcome",
-    role: "assistant",
-    content: WELCOME_MESSAGE,
-    createdAt: new Date().toISOString(),
-  },
-];
+/** Stable demo timestamp — must not use new Date() at module load (hydration-safe). */
+export const WELCOME_MESSAGE_CREATED_AT = "2025-06-19T10:30:00.000Z";
+
+export function getInitialMessages(): ChatMessage[] {
+  return [
+    {
+      id: "msg-welcome",
+      role: "assistant",
+      content: WELCOME_MESSAGE,
+      createdAt: WELCOME_MESSAGE_CREATED_AT,
+    },
+  ];
+}
 
 const GREETING_PATTERN =
   /^(hi|hello|hey|good morning|good afternoon|good evening)\b/i;

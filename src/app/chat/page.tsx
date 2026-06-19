@@ -4,45 +4,22 @@ import { useCallback, useRef, useState } from "react";
 import { ChatLayout } from "@/components/chat/chat-layout";
 import {
   buildCartUpdateMessage,
-  buildProductAddedMessage,
-  initialMessages,
-  resolveAssistantReply,
+  getInitialMessages,
 } from "@/lib/mock/chat-responses";
 import { useCart } from "@/hooks/use-cart";
+import { useCommerceChat } from "@/hooks/use-commerce-chat";
 import type { CartUpdateAction } from "@/lib/cart-utils";
 import type { CartSnapshot } from "@/types/cart";
 import type { ChatMessage } from "@/types/chat";
 
-const TYPING_DELAY_MS = 1500;
-
-function applyCartMutation(
-  mutation: NonNullable<
-    ReturnType<typeof resolveAssistantReply>["cartMutation"]
-  >,
-  cart: {
-    addItem: (productId: string) => CartSnapshot;
-    incrementItem: (productId: string) => CartSnapshot;
-    decrementItem: (productId: string) => CartSnapshot;
-  }
-): CartSnapshot | undefined {
-  switch (mutation.type) {
-    case "add":
-      return cart.addItem(mutation.productId);
-    case "increment":
-      return cart.incrementItem(mutation.productId);
-    case "decrement":
-      return cart.decrementItem(mutation.productId);
-    default:
-      return undefined;
-  }
-}
-
 export default function ChatPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>(getInitialMessages);
   const [isTyping, setIsTyping] = useState(false);
-  const { snapshot, addItem, incrementItem, decrementItem } = useCart();
+  const { snapshot, applyCartUpdates } = useCart();
   const cartRef = useRef(snapshot);
   cartRef.current = snapshot;
+
+  const { sendMessage } = useCommerceChat({ applyCartUpdates });
 
   const appendAssistantMessage = useCallback((content: string) => {
     const assistantMessage: ChatMessage = {
@@ -77,43 +54,39 @@ export default function ChatPage() {
         createdAt: new Date().toISOString(),
       };
 
-      setMessages((prev) => [...prev, customerMessage]);
+      let recentMessages: ChatMessage[] = [];
+
+      setMessages((prev) => {
+        recentMessages = [...prev, customerMessage].slice(-3);
+        return [...prev, customerMessage];
+      });
+
       setIsTyping(true);
 
-      window.setTimeout(() => {
-        const currentCart = cartRef.current;
-        const result = resolveAssistantReply(text, currentCart);
-
-        let nextSnapshot = currentCart;
-        if (result.cartMutation) {
-          const mutatedSnapshot = applyCartMutation(result.cartMutation, {
-            addItem,
-            incrementItem,
-            decrementItem,
+      void (async () => {
+        try {
+          const { assistantMessage, nextCartSnapshot } = await sendMessage({
+            message: text,
+            cartSnapshot: cartRef.current,
+            recentMessages,
           });
-          if (mutatedSnapshot) {
-            nextSnapshot = mutatedSnapshot;
-            cartRef.current = mutatedSnapshot;
-          }
+
+          cartRef.current = nextCartSnapshot;
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `msg-${Date.now() + 1}`,
+              ...assistantMessage,
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        } finally {
+          setIsTyping(false);
         }
-
-        const content =
-          result.addedProductName && result.cartMutation?.type === "add"
-            ? buildProductAddedMessage(result.addedProductName, nextSnapshot)
-            : result.reply.content;
-
-        const assistantMessage: ChatMessage = {
-          id: `msg-${Date.now() + 1}`,
-          ...result.reply,
-          content,
-          createdAt: new Date().toISOString(),
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
-        setIsTyping(false);
-      }, TYPING_DELAY_MS);
+      })();
     },
-    [addItem, incrementItem, decrementItem]
+    [sendMessage]
   );
 
   return (

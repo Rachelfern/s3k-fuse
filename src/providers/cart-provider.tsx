@@ -11,10 +11,12 @@ import {
 } from "react";
 import {
   addProductToCart,
+  applyCartUpdatesToItems,
   computeCartSnapshot,
   decrementProduct,
   incrementProduct,
 } from "@/lib/cart-utils";
+import type { ResolvedCartUpdate } from "@/types/ai";
 import type { CartLineItem, CartSnapshot } from "@/types/cart";
 
 interface CartContextValue {
@@ -23,6 +25,7 @@ interface CartContextValue {
   addItem: (productId: string) => CartSnapshot;
   incrementItem: (productId: string) => CartSnapshot;
   decrementItem: (productId: string) => CartSnapshot;
+  applyCartUpdates: (updates: ResolvedCartUpdate[]) => CartSnapshot;
   clearCart: () => void;
 }
 
@@ -69,6 +72,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [applyItems]
   );
 
+  const applyCartUpdates = useCallback(
+    (updates: ResolvedCartUpdate[]): CartSnapshot => {
+      if (updates.length === 0) return computeCartSnapshot(itemsRef.current);
+      const nextItems = applyCartUpdatesToItems(itemsRef.current, updates);
+      return applyItems(nextItems);
+    },
+    [applyItems]
+  );
+
   const clearCart = useCallback(() => {
     itemsRef.current = [];
     setItems([]);
@@ -88,6 +100,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       addItem,
       incrementItem,
       decrementItem,
+      applyCartUpdates,
       clearCart,
     }),
     [
@@ -96,6 +109,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       addItem,
       incrementItem,
       decrementItem,
+      applyCartUpdates,
       clearCart,
     ]
   );

@@ -1,4 +1,5 @@
 import { mockProductMap } from "@/lib/mock/products";
+import type { ResolvedCartUpdate } from "@/types/ai";
 import type { CartLineItem, CartSnapshot } from "@/types/cart";
 
 export function computeCartSnapshot(items: CartLineItem[]): CartSnapshot {
@@ -43,6 +44,56 @@ export function incrementProduct(
   productId: string
 ): CartLineItem[] {
   return addProductToCart(items, productId);
+}
+
+export function addProductWithQuantity(
+  items: CartLineItem[],
+  productId: string,
+  quantity: number
+): CartLineItem[] {
+  const product = mockProductMap[productId];
+  if (!product || quantity <= 0) return items;
+
+  const existing = items.find((item) => item.productId === productId);
+  if (existing) {
+    const nextQuantity = existing.quantity + quantity;
+    return items.map((item) =>
+      item.productId === productId
+        ? {
+            ...item,
+            quantity: nextQuantity,
+            lineSubtotal: nextQuantity * product.price,
+          }
+        : item
+    );
+  }
+
+  return [
+    ...items,
+    {
+      productId,
+      product,
+      quantity,
+      lineSubtotal: quantity * product.price,
+    },
+  ];
+}
+
+export function applyCartUpdatesToItems(
+  items: CartLineItem[],
+  updates: ResolvedCartUpdate[]
+): CartLineItem[] {
+  let nextItems = items;
+
+  for (const update of updates) {
+    nextItems = addProductWithQuantity(
+      nextItems,
+      update.productId,
+      update.quantity
+    );
+  }
+
+  return nextItems;
 }
 
 export function decrementProduct(
