@@ -80,10 +80,11 @@ The app redirects unauthenticated users to `/admin/login`.
 
 Copy `.env.example` → `.env.local` and fill in from **Project Settings → API**:
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY` (same value as service role — required for admin dashboard client reads + realtime)
+- `NEXT_PUBLIC_SUPABASE_URL` — public, safe for the browser
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — public, safe for the browser (RLS-protected)
+- `SUPABASE_SERVICE_ROLE_KEY` — **server-only**; used by API routes and server-side admin data fetches. Never use a `NEXT_PUBLIC_` prefix for this key.
+
+Admin pages load data through authenticated API routes (`/api/admin/*`) that use the server-side service role. Realtime subscriptions use the anon key via the browser client.
 
 ## 7. Expected admin dashboard metrics (after seed)
 
