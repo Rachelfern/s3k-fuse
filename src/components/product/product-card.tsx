@@ -2,6 +2,7 @@
 
 import { Minus, Plus, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ProductImage } from "@/components/product/product-image";
 import { formatCurrency } from "@/lib/format";
 import type { MockProduct } from "@/lib/mock/products";
 import { cn } from "@/lib/utils";
@@ -10,6 +11,7 @@ interface ProductCardProps {
   product: MockProduct;
   quantity?: number;
   compact?: boolean;
+  tag?: string;
   onAdd?: () => void;
   onIncrement?: () => void;
   onDecrement?: () => void;
@@ -20,6 +22,7 @@ export function ProductCard({
   product,
   quantity = 0,
   compact = false,
+  tag,
   onAdd,
   onIncrement,
   onDecrement,
@@ -34,24 +37,19 @@ export function ProductCard({
         className
       )}
     >
-      <div
-        className={cn(
-          "relative flex items-center justify-center bg-gradient-to-br",
-          product.imageGradient,
-          compact ? "h-24" : "h-32"
-        )}
-      >
-        <span className={cn("select-none", compact ? "text-4xl" : "text-5xl")}>
-          {product.imageEmoji}
-        </span>
+      <div className="relative">
+        <ProductImage
+          productId={product.id}
+          name={product.name}
+          imageUrl={product.image_url}
+          fill
+          className={compact ? "h-24 rounded-t-xl" : "h-32 rounded-t-xl"}
+        />
         {inCart && (
-          <span className="absolute right-2 top-2 rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white shadow">
+          <span className="absolute right-2 top-2 rounded-full bg-[var(--whatsapp-primary)] px-2 py-0.5 text-xs font-semibold text-white shadow">
             ×{quantity}
           </span>
         )}
-        <span className="absolute bottom-2 left-2 rounded-md bg-black/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white backdrop-blur-sm">
-          Photo soon
-        </span>
       </div>
 
       <div className={cn("space-y-2", compact ? "p-2.5" : "p-3")}>
@@ -64,7 +62,7 @@ export function ProductCard({
           >
             {product.name}
           </h3>
-          <p className="shrink-0 text-sm font-bold text-emerald-700">
+          <p className="shrink-0 text-sm font-bold text-[var(--whatsapp-accent)]">
             {formatCurrency(product.price)}
           </p>
         </div>
@@ -74,6 +72,12 @@ export function ProductCard({
             {product.description}
           </p>
         )}
+
+        {tag ? (
+          <span className="inline-block rounded-full bg-[var(--whatsapp-accent)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--whatsapp-accent)]">
+            {tag}
+          </span>
+        ) : null}
 
         <div className="flex items-center gap-1.5">
           <div className="flex items-center gap-0.5">

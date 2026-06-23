@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { CartProvider } from "@/providers/cart-provider";
+import { ChatProvider } from "@/providers/chat-provider";
 import { CheckoutProvider } from "@/providers/checkout-provider";
 import "./globals.css";
 
@@ -23,7 +24,9 @@ export default function RootLayout({
     <html lang="en" className={inter.variable}>
       <body className={`${inter.className} antialiased`}>
         <CartProvider>
-          <CheckoutProvider>{children}</CheckoutProvider>
+          <CheckoutProvider>
+            <ChatProvider>{children}</ChatProvider>
+          </CheckoutProvider>
         </CartProvider>
       </body>
     </html>

@@ -1,4 +1,5 @@
 import { BUSINESS_ID, PRODUCT_IDS } from "@/lib/demo";
+import { PRODUCT_IMAGE_URLS } from "@/lib/product-images";
 
 export interface MockProduct {
   id: string;
@@ -8,65 +9,72 @@ export interface MockProduct {
   price: number;
   rating: number;
   reviewCount: number;
+  image_url?: string | null;
   imageEmoji: string;
   imageGradient: string;
 }
 
+/** Static catalog mirror — UUIDs and names must match lib/seed.ts / Supabase products */
 export const mockProducts: MockProduct[] = [
   {
-    id: PRODUCT_IDS.rajmaChawal,
+    id: PRODUCT_IDS.alphonsoMango,
     business_id: BUSINESS_ID,
-    name: "Rajma Chawal",
-    description: "Comforting kidney beans with steamed rice",
-    price: 120,
+    name: "Alphonso Mango",
+    description: "Sweet seasonal mangoes",
+    price: 34,
     rating: 4.8,
     reviewCount: 214,
-    imageEmoji: "🍛",
+    image_url: PRODUCT_IMAGE_URLS[PRODUCT_IDS.alphonsoMango],
+    imageEmoji: "🥭",
     imageGradient: "from-amber-400 to-orange-500",
   },
   {
-    id: PRODUCT_IDS.dalFry,
+    id: PRODUCT_IDS.freshBanana,
     business_id: BUSINESS_ID,
-    name: "Dal Fry",
-    description: "Slow-cooked yellow lentils with tempered spices",
-    price: 90,
+    name: "Fresh Banana",
+    description: "Ripe bananas",
+    price: 25,
     rating: 4.6,
     reviewCount: 189,
-    imageEmoji: "🥣",
+    image_url: PRODUCT_IMAGE_URLS[PRODUCT_IDS.freshBanana],
+    imageEmoji: "🍌",
     imageGradient: "from-yellow-400 to-amber-500",
   },
   {
-    id: PRODUCT_IDS.paneerButterMasala,
+    id: PRODUCT_IDS.farmFreshMilk,
     business_id: BUSINESS_ID,
-    name: "Paneer Butter Masala",
-    description: "Cottage cheese in rich tomato-butter gravy",
-    price: 180,
+    name: "Farm Fresh Milk 1L",
+    description: "Fresh dairy milk",
+    price: 75,
     rating: 4.9,
     reviewCount: 342,
-    imageEmoji: "🧀",
-    imageGradient: "from-orange-400 to-red-500",
+    image_url: PRODUCT_IMAGE_URLS[PRODUCT_IDS.farmFreshMilk],
+    imageEmoji: "🥛",
+    imageGradient: "from-blue-100 to-slate-200",
   },
   {
-    id: PRODUCT_IDS.butterNaan,
+    id: PRODUCT_IDS.broccoli,
     business_id: BUSINESS_ID,
-    name: "Butter Naan",
-    description: "Soft tandoor bread brushed with butter",
-    price: 40,
+    name: "Broccoli 1pc",
+    description: "Fresh green broccoli",
+    price: 29,
     rating: 4.7,
     reviewCount: 156,
-    imageEmoji: "🫓",
-    imageGradient: "from-amber-300 to-yellow-500",
+    image_url: PRODUCT_IMAGE_URLS[PRODUCT_IDS.broccoli],
+    imageEmoji: "🥦",
+    imageGradient: "from-green-400 to-emerald-500",
   },
   {
-    id: PRODUCT_IDS.mangoLassi,
+    id: PRODUCT_IDS.tomatoes,
     business_id: BUSINESS_ID,
-    name: "Mango Lassi",
-    description: "Chilled yogurt drink with ripe mango",
-    price: 60,
+    name: "Tomatoes 500g",
+    description: "Farm-fresh tomatoes",
+    price: 18,
     rating: 4.5,
     reviewCount: 98,
-    imageEmoji: "🥭",
-    imageGradient: "from-yellow-300 to-orange-400",
+    image_url: PRODUCT_IMAGE_URLS[PRODUCT_IDS.tomatoes],
+    imageEmoji: "🍅",
+    imageGradient: "from-red-400 to-rose-500",
   },
 ];
 

@@ -18,6 +18,19 @@ import {
 } from "@/lib/cart-utils";
 import type { ResolvedCartUpdate } from "@/types/ai";
 import type { CartLineItem, CartSnapshot } from "@/types/cart";
+import type { CartActionType } from "@/lib/chat/cart-action-messages";
+
+export type CartMutationNotice = {
+  productId: string;
+  productName: string;
+  action: CartActionType;
+  previousQuantity: number;
+  newQuantity: number;
+  unitPrice: number;
+  cartTotal: number;
+  removedQuantity?: number;
+  at: number;
+};
 
 interface CartContextValue {
   snapshot: CartSnapshot;
@@ -26,17 +39,31 @@ interface CartContextValue {
   incrementItem: (productId: string) => CartSnapshot;
   decrementItem: (productId: string) => CartSnapshot;
   applyCartUpdates: (updates: ResolvedCartUpdate[]) => CartSnapshot;
-  clearCart: () => void;
+  clearCart: (options?: { announce?: boolean }) => void;
+  lastMutation: CartMutationNotice | null;
+  recordCartMutation: (
+    mutation: Omit<CartMutationNotice, "at">,
+  ) => void;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartLineItem[]>([]);
+  const [lastMutation, setLastMutation] = useState<CartMutationNotice | null>(
+    null,
+  );
   const itemsRef = useRef<CartLineItem[]>(items);
   itemsRef.current = items;
 
   const snapshot = useMemo(() => computeCartSnapshot(items), [items]);
+
+  const recordCartMutation = useCallback(
+    (mutation: Omit<CartMutationNotice, "at">) => {
+      setLastMutation({ ...mutation, at: Date.now() });
+    },
+    [],
+  );
 
   const applyItems = useCallback(
     (nextItems: CartLineItem[]): CartSnapshot => {
@@ -81,9 +108,25 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [applyItems]
   );
 
-  const clearCart = useCallback(() => {
+  const clearCart = useCallback((options?: { announce?: boolean }) => {
+    const previousTotal = computeCartSnapshot(itemsRef.current).subtotal;
     itemsRef.current = [];
     setItems([]);
+
+    if (options?.announce && previousTotal > 0) {
+      setLastMutation({
+        productId: "",
+        productName: "",
+        action: "clear",
+        previousQuantity: 0,
+        newQuantity: 0,
+        unitPrice: 0,
+        cartTotal: 0,
+        at: Date.now(),
+      });
+    } else {
+      setLastMutation(null);
+    }
   }, []);
 
   const getQuantity = useCallback(
@@ -102,6 +145,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
       decrementItem,
       applyCartUpdates,
       clearCart,
+      lastMutation,
+      recordCartMutation,
     }),
     [
       snapshot,
@@ -111,7 +156,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
       decrementItem,
       applyCartUpdates,
       clearCart,
-    ]
+      lastMutation,
+      recordCartMutation,
+    ],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

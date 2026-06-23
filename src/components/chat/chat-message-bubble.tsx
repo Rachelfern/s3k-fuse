@@ -23,18 +23,16 @@ export function ChatMessageBubble({
   const isCustomer = message.role === "customer";
 
   return (
-    <div
-      className={cn("flex", isCustomer ? "justify-end" : "justify-start")}
-    >
+    <div className={isCustomer ? "chat-row-outgoing" : "chat-row-incoming"}>
       <div
         className={cn(
-          "max-w-[88%] rounded-2xl px-3 py-2 shadow-sm sm:max-w-[80%]",
+          "chat-bubble-max w-fit rounded-[18px] px-2.5 py-1.5 shadow-sm",
           isCustomer
-            ? "rounded-tr-sm border border-[var(--whatsapp-out-border)] bg-[var(--whatsapp-out)] text-foreground"
-            : "rounded-tl-sm border border-black/5 bg-[var(--whatsapp-in)] text-foreground"
+            ? "rounded-br-[4px] bg-[#dcf8c6] text-gray-900"
+            : "rounded-bl-[4px] bg-white text-gray-900",
         )}
       >
-        <p className="whitespace-pre-wrap text-sm leading-relaxed">
+        <p className="whitespace-pre-wrap text-[14px] leading-snug">
           {message.content}
         </p>
 
@@ -47,11 +45,11 @@ export function ChatMessageBubble({
 
         <p
           className={cn(
-            "mt-1 text-right text-[10px]",
-            isCustomer ? "text-emerald-800/60" : "text-muted-foreground"
+            "mt-0.5 text-right text-[10px]",
+            isCustomer ? "text-gray-500" : "text-gray-400",
           )}
         >
-          {formatTime(message.createdAt)}
+          {message.createdAt ? formatTime(message.createdAt) : null}
         </p>
       </div>
     </div>

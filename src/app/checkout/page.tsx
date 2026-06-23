@@ -4,22 +4,43 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
-  CommerceCard,
-  CommerceSectionTitle,
-  CommerceShell,
-} from "@/components/commerce/commerce-shell";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+  CustomerCard,
+  CustomerPrimaryButton,
+  CustomerQuickLink,
+  CustomerSectionTitle,
+  CustomerShell,
+  customerFieldClassName,
+} from "@/components/customer/customer-shell";
+import { ProductImage } from "@/components/product/product-image";
 import { useCart } from "@/hooks/use-cart";
 import { useCheckout } from "@/hooks/use-checkout";
+import {
+  getCustomerSession,
+  getVaartaAddress,
+  saveVaartaProfile,
+} from "@/lib/chat/customer-storage";
+import { DEFAULT_DELIVERY_FEE } from "@/lib/orders/create-order";
 import { formatCurrency } from "@/lib/format";
 import type { CheckoutDetails } from "@/types/checkout";
+
+function getInitialCheckoutDetails(
+  checkoutDetails: CheckoutDetails,
+): CheckoutDetails {
+  const session = getCustomerSession();
+  return {
+    name: session.customerName ?? checkoutDetails.name,
+    phone: session.phone ?? checkoutDetails.phone,
+    address: getVaartaAddress() ?? checkoutDetails.address,
+  };
+}
 
 export default function CheckoutPage() {
   const router = useRouter();
   const { snapshot } = useCart();
   const { checkoutDetails, setCheckoutDetails } = useCheckout();
-  const [form, setForm] = useState<CheckoutDetails>(checkoutDetails);
+  const [form, setForm] = useState<CheckoutDetails>(() =>
+    getInitialCheckoutDetails(checkoutDetails),
+  );
   const [error, setError] = useState<string | null>(null);
 
   const isEmpty = snapshot.itemCount === 0;
@@ -40,89 +61,107 @@ export default function CheckoutPage() {
     }
 
     setError(null);
+    saveVaartaProfile({ name, phone });
     setCheckoutDetails({ name, phone, address });
     router.push("/payment");
   }
 
   if (isEmpty) {
     return (
-      <CommerceShell
-        title="Checkout"
+      <CustomerShell
         backHref="/cart"
         backLabel="Back to cart"
-      >
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 py-16 text-center">
-          <p className="text-base font-medium text-foreground">
-            Your cart is empty
-          </p>
-          <Button
-            asChild
-            className="rounded-xl bg-emerald-600 hover:bg-emerald-700"
+        subtitle="Checkout"
+        quickActions={
+          <>
+            <CustomerQuickLink href="/chat">← Back to Chat</CustomerQuickLink>
+            <CustomerQuickLink href="/products">🛒 Browse Menu</CustomerQuickLink>
+          </>
+        }
+        footer={
+          <CustomerPrimaryButton
+            type="button"
+            onClick={() => router.push("/products")}
           >
-            <Link href="/chat">Back to Chat</Link>
-          </Button>
+            Browse Menu
+          </CustomerPrimaryButton>
+        }
+      >
+        <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+          <p className="text-sm font-medium text-gray-700">Your cart is empty</p>
+          <Link
+            href="/chat"
+            className="text-xs font-medium text-[var(--whatsapp-accent)] underline"
+          >
+            Return to chat
+          </Link>
         </div>
-      </CommerceShell>
+      </CustomerShell>
     );
   }
 
   return (
-    <CommerceShell
-      title="Checkout"
+    <CustomerShell
       backHref="/cart"
       backLabel="Back to cart"
+      subtitle="Checkout"
+      quickActions={
+        <>
+          <CustomerQuickLink href="/chat">← Back to Chat</CustomerQuickLink>
+          <CustomerQuickLink href="/cart">🛒 Back to Cart</CustomerQuickLink>
+          <CustomerQuickLink href="/products">📋 Browse Menu</CustomerQuickLink>
+        </>
+      }
       footer={
-        <form onSubmit={handleContinue}>
-          <div className="mb-4 flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm">
-            <span className="text-sm font-medium text-muted-foreground">
-              Total amount
-            </span>
-            <span className="text-lg font-bold text-emerald-700">
-              {formatCurrency(snapshot.subtotal)}
+        <form onSubmit={handleContinue} className="space-y-3">
+          <div className="flex items-center justify-between rounded-[18px_18px_18px_4px] bg-gray-50 px-4 py-3">
+            <span className="text-sm font-medium text-gray-500">Total amount</span>
+            <span className="text-lg font-bold text-[var(--whatsapp-accent)]">
+              {formatCurrency(snapshot.subtotal + DEFAULT_DELIVERY_FEE)}
             </span>
           </div>
-          <Button
-            type="submit"
-            className="h-12 w-full rounded-xl bg-emerald-600 text-base font-semibold hover:bg-emerald-700"
-          >
-            Continue to Payment
-          </Button>
+          <CustomerPrimaryButton type="submit">
+            Continue to Payment · {formatCurrency(snapshot.subtotal + DEFAULT_DELIVERY_FEE)}
+          </CustomerPrimaryButton>
         </form>
       }
     >
-      <form className="space-y-4" onSubmit={handleContinue}>
-        <CommerceCard>
-          <CommerceSectionTitle>Delivery details</CommerceSectionTitle>
+      <form className="space-y-3" onSubmit={handleContinue}>
+        <CustomerCard>
+          <CustomerSectionTitle>Delivery details</CustomerSectionTitle>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <label htmlFor="name" className="text-sm font-medium">
+              <label htmlFor="name" className="text-xs font-medium text-gray-600">
                 Name
               </label>
-              <Input
+              <input
                 id="name"
                 value={form.name}
                 onChange={(e) => updateField("name", e.target.value)}
                 placeholder="Your full name"
                 autoComplete="name"
-                className="bg-white"
+                className={customerFieldClassName}
               />
             </div>
             <div className="space-y-1.5">
-              <label htmlFor="phone" className="text-sm font-medium">
+              <label htmlFor="phone" className="text-xs font-medium text-gray-600">
                 Phone number
               </label>
-              <Input
+              <input
                 id="phone"
                 type="tel"
                 value={form.phone}
                 onChange={(e) => updateField("phone", e.target.value)}
                 placeholder="+91 98765 43210"
                 autoComplete="tel"
-                className="bg-white"
+                className={customerFieldClassName}
               />
             </div>
             <div className="space-y-1.5">
-              <label htmlFor="address" className="text-sm font-medium">
+              <label
+                htmlFor="address"
+                className="text-xs font-medium text-gray-600"
+              >
                 Delivery address
               </label>
               <textarea
@@ -131,38 +170,43 @@ export default function CheckoutPage() {
                 onChange={(e) => updateField("address", e.target.value)}
                 placeholder="House no., street, city, pin code"
                 rows={3}
-                className="flex w-full rounded-lg border border-input bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                className={customerFieldClassName}
               />
             </div>
           </div>
           {error ? (
-            <p className="mt-3 text-sm text-destructive">{error}</p>
+            <p className="mt-3 text-sm text-red-600">{error}</p>
           ) : null}
-        </CommerceCard>
+        </CustomerCard>
 
-        <CommerceCard>
-          <CommerceSectionTitle>Order summary</CommerceSectionTitle>
+        <CustomerCard>
+          <CustomerSectionTitle>Order summary</CustomerSectionTitle>
           <ul className="space-y-3">
             {snapshot.items.map((item) => (
               <li
                 key={item.productId}
-                className="flex items-start justify-between gap-3 text-sm"
+                className="flex items-center gap-3 text-sm"
               >
-                <div>
-                  <p className="font-medium">{item.product.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Qty {item.quantity} · {formatCurrency(item.product.price)}{" "}
-                    each
+                <ProductImage
+                  productId={item.productId}
+                  name={item.product.name}
+                  imageUrl={item.product.image_url}
+                  size="xs"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-gray-900">{item.product.name}</p>
+                  <p className="text-xs text-gray-500">
+                    Qty {item.quantity} · {formatCurrency(item.product.price)} each
                   </p>
                 </div>
-                <p className="shrink-0 font-semibold text-emerald-700">
+                <p className="shrink-0 font-semibold text-[var(--whatsapp-accent)]">
                   {formatCurrency(item.lineSubtotal)}
                 </p>
               </li>
             ))}
           </ul>
-        </CommerceCard>
+        </CustomerCard>
       </form>
-    </CommerceShell>
+    </CustomerShell>
   );
 }

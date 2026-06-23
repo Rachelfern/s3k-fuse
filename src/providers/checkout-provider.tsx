@@ -25,7 +25,9 @@ interface CheckoutContextValue {
     items: CartLineItem[];
     subtotal: number;
     payment: PaymentDetails;
+    orderId?: string;
   }) => CompletedOrder;
+  resetCheckout: () => void;
 }
 
 const CheckoutContext = createContext<CheckoutContextValue | null>(null);
@@ -51,9 +53,10 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
       items: CartLineItem[];
       subtotal: number;
       payment: PaymentDetails;
+      orderId?: string;
     }): CompletedOrder => {
       const order: CompletedOrder = {
-        orderId: createOrderId(),
+        orderId: input.orderId ?? createOrderId(),
         placedAt: new Date().toISOString(),
         checkout: input.checkout,
         items: input.items,
@@ -66,14 +69,25 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const resetCheckout = useCallback(() => {
+    setCheckoutDetailsState(emptyCheckoutDetails);
+  }, []);
+
   const value = useMemo(
     () => ({
       checkoutDetails,
       setCheckoutDetails,
       completedOrder,
       completeOrder,
+      resetCheckout,
     }),
-    [checkoutDetails, setCheckoutDetails, completedOrder, completeOrder]
+    [
+      checkoutDetails,
+      setCheckoutDetails,
+      completedOrder,
+      completeOrder,
+      resetCheckout,
+    ]
   );
 
   return (

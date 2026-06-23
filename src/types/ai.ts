@@ -18,6 +18,10 @@ export interface ResolvedCartUpdate {
   productId: string;
   productName: string;
   quantity: number;
+  /** Authoritative unit price from the database — never from LLM output */
+  unitPrice?: number;
+  /** Product photo from catalog — preserved across cart sync */
+  imageUrl?: string | null;
 }
 
 /** Normalized response from /api/chat */

@@ -10,7 +10,7 @@ import type { CartSnapshot } from "@/types/cart";
 interface ChatLayoutProps {
   messages: Parameters<typeof ChatMessages>[0]["messages"];
   isTyping: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, messageId: string) => void;
   onCartUpdated?: (
     productName: string,
     snapshot: CartSnapshot,
@@ -27,7 +27,7 @@ export function ChatLayout({
   inputDisabled,
 }: ChatLayoutProps) {
   return (
-    <div className="mx-auto flex h-[100dvh] w-full max-w-md flex-col bg-[var(--whatsapp-bg)]">
+    <div className="chat-shell flex w-full flex-col bg-[var(--whatsapp-bg)]">
       <ChatHeader />
       <div className="whatsapp-pattern flex min-h-0 flex-1 flex-col">
         <ChatMessages

@@ -5,6 +5,7 @@ import {
   buildFallbackAssistantContent,
   runFallbackResolver,
 } from "@/lib/chat/fallback-resolver";
+import { sanitizeAssistantResponse } from "@/lib/ai/response-validation";
 import type { ChatAgentResult } from "@/types/ai";
 import type { CartSnapshot } from "@/types/cart";
 import type { ChatMessage } from "@/types/chat";
@@ -57,7 +58,9 @@ export function useCommerceChat({ applyCartUpdates }: UseCommerceChatOptions) {
         nextCartSnapshot = applyCartUpdates(result.cartUpdates);
       }
 
-      const content = buildFallbackAssistantContent(result, nextCartSnapshot);
+      const content = sanitizeAssistantResponse(
+        buildFallbackAssistantContent(result, nextCartSnapshot),
+      );
 
       return {
         assistantMessage: {

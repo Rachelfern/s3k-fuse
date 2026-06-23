@@ -7,7 +7,7 @@ import { mockBusiness } from "@/lib/mock/business";
 
 export default function HomePage() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-emerald-50 via-background to-background px-6">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[var(--whatsapp-accent)]/10 via-background to-background px-6">
       <div className="flex w-full max-w-md flex-col items-center gap-8 text-center">
         <S3KLogo size="lg" />
 
@@ -18,13 +18,13 @@ export default function HomePage() {
           <p className="text-muted-foreground text-base leading-relaxed">
             Order food through a WhatsApp-style chat powered by AI.
           </p>
-          <p className="text-sm text-emerald-700/80">{mockBusiness.tagline}</p>
+          <p className="text-sm text-[var(--whatsapp-accent)]/80">{mockBusiness.tagline}</p>
         </div>
 
         <Button
           asChild
           size="lg"
-          className="h-12 w-full max-w-xs rounded-xl text-base font-semibold shadow-lg shadow-emerald-600/20"
+          className="h-12 w-full max-w-xs rounded-xl text-base font-semibold shadow-lg shadow-[var(--whatsapp-primary)]/20"
         >
           <Link href="/chat">
             <MessageCircle className="size-5" />

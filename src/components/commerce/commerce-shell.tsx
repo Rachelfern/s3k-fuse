@@ -28,7 +28,7 @@ export function CommerceShell({
   return (
     <div
       className={cn(
-        "mx-auto flex min-h-[100dvh] w-full max-w-md flex-col bg-[var(--whatsapp-bg)]",
+        "flex min-h-[100dvh] w-full flex-col bg-[var(--whatsapp-bg)]",
         className
       )}
     >
@@ -45,7 +45,7 @@ export function CommerceShell({
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-white">{title}</p>
-          <p className="truncate text-xs text-emerald-100/80">
+          <p className="truncate text-xs text-white/70">
             {mockBusiness.name}
           </p>
         </div>

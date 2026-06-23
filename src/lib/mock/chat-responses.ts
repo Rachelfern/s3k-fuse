@@ -18,16 +18,15 @@ I can help you:
 
 Type a message to get started.`;
 
-/** Stable demo timestamp — must not use new Date() at module load (hydration-safe). */
-export const WELCOME_MESSAGE_CREATED_AT = "2025-06-19T10:30:00.000Z";
+export const WELCOME_MESSAGE_ID = "msg-welcome";
 
 export function getInitialMessages(): ChatMessage[] {
   return [
     {
-      id: "msg-welcome",
+      id: WELCOME_MESSAGE_ID,
       role: "assistant",
       content: WELCOME_MESSAGE,
-      createdAt: WELCOME_MESSAGE_CREATED_AT,
+      createdAt: "",
     },
   ];
 }
@@ -38,7 +37,8 @@ const GREETING_PATTERN =
 const PRODUCT_PATTERN =
   /\b(menu|products?|recommend(?:ation)?s?|browse|catalog|show me|what(?:'s| is) available|what do you (?:have|sell|offer))\b/i;
 
-const CART_PATTERN = /^(?:show\s+)?(?:my\s+)?cart\b/i;
+const CART_PATTERN =
+  /^(?:view|show|see|check|open)\s+(?:my\s+)?cart$|^(?:my\s+)?cart$|^what(?:'s| is) in my cart\??$/i;
 
 const ADD_PATTERN = /^add\s+(.+)/i;
 
@@ -144,4 +144,19 @@ export function buildCartUpdateMessage(
   action: CartUpdateAction
 ): string {
   return formatCartUpdateConfirmation(productName, snapshot, action);
+}
+
+export function buildOrderSuccessMessage(
+  orderId: string,
+  total: number
+): string {
+  const formattedTotal = new Intl.NumberFormat("en-IN", {
+    maximumFractionDigits: 0,
+  }).format(total);
+
+  return `✅ Your order has been placed successfully.
+Order ID: ${orderId}
+Total: ₹${formattedTotal}
+
+Can I help you with anything else?`;
 }

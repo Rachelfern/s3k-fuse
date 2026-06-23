@@ -15,13 +15,13 @@ export function S3KLogo({ className, size = "md" }: S3KLogoProps) {
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 font-bold text-white shadow-md ring-2 ring-white/30",
+        "flex shrink-0 items-center justify-center rounded-full bg-[var(--whatsapp-primary)] font-bold text-white shadow-md ring-2 ring-white/30",
         sizes[size],
         className
       )}
       aria-hidden
     >
-      S3
+      S3K
     </div>
   );
 }

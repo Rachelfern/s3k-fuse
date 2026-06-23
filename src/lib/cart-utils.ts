@@ -1,6 +1,46 @@
+import { getProductImageUrl } from "@/lib/product-images";
+import { assertCartProductMatch, catalogDebug } from "@/lib/ai/catalog-debug";
+import { BUSINESS_ID } from "@/lib/demo";
 import { mockProductMap } from "@/lib/mock/products";
+import type { MockProduct } from "@/lib/mock/products";
 import type { ResolvedCartUpdate } from "@/types/ai";
 import type { CartLineItem, CartSnapshot } from "@/types/cart";
+
+function resolveCartProduct(
+  productId: string,
+  override?: {
+    productName?: string;
+    unitPrice?: number;
+    imageUrl?: string | null;
+  },
+): MockProduct | null {
+  const mock = mockProductMap[productId];
+  const image_url = getProductImageUrl({
+    id: productId,
+    image_url: override?.imageUrl ?? mock?.image_url,
+  });
+
+  if (override?.productName && override.unitPrice != null) {
+    return {
+      id: productId,
+      business_id: BUSINESS_ID,
+      name: override.productName,
+      description: mock?.description ?? "",
+      price: override.unitPrice,
+      rating: mock?.rating ?? 4.5,
+      reviewCount: mock?.reviewCount ?? 0,
+      image_url,
+      imageEmoji: mock?.imageEmoji ?? "🛒",
+      imageGradient: mock?.imageGradient ?? "from-emerald-100 to-teal-100",
+    };
+  }
+
+  if (mock) {
+    return { ...mock, image_url };
+  }
+
+  return null;
+}
 
 export function computeCartSnapshot(items: CartLineItem[]): CartSnapshot {
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
@@ -10,12 +50,17 @@ export function computeCartSnapshot(items: CartLineItem[]): CartSnapshot {
 
 export function addProductToCart(
   items: CartLineItem[],
-  productId: string
+  productId: string,
+  override?: {
+    productName?: string;
+    unitPrice?: number;
+    imageUrl?: string | null;
+  },
 ): CartLineItem[] {
-  const product = mockProductMap[productId];
+  const existing = items.find((item) => item.productId === productId);
+  const product = existing?.product ?? resolveCartProduct(productId, override);
   if (!product) return items;
 
-  const existing = items.find((item) => item.productId === productId);
   if (existing) {
     return items.map((item) =>
       item.productId === productId
@@ -49,12 +94,16 @@ export function incrementProduct(
 export function addProductWithQuantity(
   items: CartLineItem[],
   productId: string,
-  quantity: number
+  quantity: number,
+  override?: {
+    productName?: string;
+    unitPrice?: number;
+    imageUrl?: string | null;
+  },
 ): CartLineItem[] {
-  const product = mockProductMap[productId];
-  if (!product || quantity <= 0) return items;
-
   const existing = items.find((item) => item.productId === productId);
+  const product = existing?.product ?? resolveCartProduct(productId, override);
+  if (!product || quantity <= 0) return items;
   if (existing) {
     const nextQuantity = existing.quantity + quantity;
     return items.map((item) =>
@@ -86,11 +135,31 @@ export function applyCartUpdatesToItems(
   let nextItems = items;
 
   for (const update of updates) {
+    const clicked = {
+      id: update.productId,
+      name: update.productName,
+    };
+
     nextItems = addProductWithQuantity(
       nextItems,
       update.productId,
-      update.quantity
+      update.quantity,
+      {
+        productName: update.productName,
+        unitPrice: update.unitPrice,
+        imageUrl: update.imageUrl,
+      },
     );
+
+    const addedItem = nextItems.find((item) => item.productId === update.productId);
+    if (addedItem) {
+      const added = {
+        id: addedItem.productId,
+        name: addedItem.product.name,
+      };
+      assertCartProductMatch(clicked, added);
+      catalogDebug("cart_apply_update", { clicked, added });
+    }
   }
 
   return nextItems;
@@ -100,7 +169,8 @@ export function decrementProduct(
   items: CartLineItem[],
   productId: string
 ): CartLineItem[] {
-  const product = mockProductMap[productId];
+  const existing = items.find((item) => item.productId === productId);
+  const product = existing?.product ?? mockProductMap[productId];
   if (!product) return items;
 
   return items
@@ -140,7 +210,7 @@ export function formatAddedConfirmation(
   return `${productName} added to your cart.\n\nCart:\n${snapshot.itemCount} ${itemLabel}\n₹${snapshot.subtotal.toLocaleString("en-IN")}`;
 }
 
-export type CartUpdateAction = "add" | "increment" | "decrement";
+export type CartUpdateAction = "add" | "increment" | "decrement" | "remove" | "clear";
 
 export function formatCartUpdateConfirmation(
   productName: string,
