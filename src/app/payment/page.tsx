@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { CommerceErrorBoundary } from "@/components/error/commerce-error-boundary";
 import { SimulatedPaymentPanel } from "@/components/payment/simulated-payment-panel";
 import { UpiQrPaymentPanel } from "@/components/payment/upi-qr-payment-panel";
@@ -1214,10 +1214,26 @@ function PaymentPageContent() {
   );
 }
 
+function PaymentPageFallback() {
+  return (
+    <CustomerShell
+      backHref="/checkout"
+      backLabel="Back to checkout"
+      subtitle="Payment"
+    >
+      <CustomerCard className="py-6 text-center text-sm text-gray-600">
+        Loading…
+      </CustomerCard>
+    </CustomerShell>
+  );
+}
+
 export default function PaymentPage() {
   return (
     <CommerceErrorBoundary pageTitle="Payment" backHref="/checkout">
-      <PaymentPageContent />
+      <Suspense fallback={<PaymentPageFallback />}>
+        <PaymentPageContent />
+      </Suspense>
     </CommerceErrorBoundary>
   );
 }
