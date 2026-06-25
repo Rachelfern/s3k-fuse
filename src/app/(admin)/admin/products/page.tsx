@@ -1,11 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Plus, Pencil } from "lucide-react";
 import type { Product } from "@/lib/types";
 import type { ProductFilter } from "@/lib/admin/products-list";
+import { AddProductModal } from "@/components/admin/add-product-modal";
+import { EditProductModal } from "@/components/admin/edit-product-modal";
 import { ConnectionErrorBanner } from "@/components/ui/connection-error-banner";
 import { ProductGridSkeleton } from "@/components/ui/product-grid-skeleton";
 import { StockStatusBadge } from "@/components/ui/stock-status-badge";
+import { Toast } from "@/components/ui/toast";
+import { Button } from "@/components/ui/button";
 import { ProductImage } from "@/components/product/product-image";
 import { formatINR } from "@/lib/admin/order-utils";
 import { cn } from "@/lib/utils";
@@ -55,6 +60,10 @@ export default function AdminProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [addToastVisible, setAddToastVisible] = useState(false);
+  const [inventoryToastVisible, setInventoryToastVisible] = useState(false);
 
   const loadProducts = useCallback(async (filter: ProductFilter) => {
     setLoading(true);
@@ -81,12 +90,22 @@ export default function AdminProductsPage() {
   }, [activeTab, loadProducts]);
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900">Products</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          Menu items available in S3K Commerce
-        </p>
+    <div className="admin-page">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Products</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Menu items available in S3K Commerce
+          </p>
+        </div>
+        <Button
+          type="button"
+          onClick={() => setAddModalOpen(true)}
+          className="w-full bg-green-500 text-white hover:bg-green-600 sm:w-auto"
+        >
+          <Plus className="size-4" />
+          Add Product
+        </Button>
       </div>
 
       {error ? (
@@ -131,13 +150,14 @@ export default function AdminProductsPage() {
                 <th className="px-5 py-3">Price</th>
                 <th className="px-5 py-3">Stock</th>
                 <th className="px-5 py-3">Status</th>
+                <th className="px-5 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {products.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-5 py-10 text-center text-gray-500"
                   >
                     No products found.
@@ -196,6 +216,17 @@ export default function AdminProductsPage() {
                         {product.active ? "Active" : "Inactive"}
                       </span>
                     </td>
+                    <td className="px-5 py-4 text-right">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditingProduct(product)}
+                      >
+                        <Pencil className="size-3.5" />
+                        Edit
+                      </Button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -204,6 +235,37 @@ export default function AdminProductsPage() {
         </div>
       </div>
       )}
+
+      <AddProductModal
+        open={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        onSuccess={() => {
+          setAddToastVisible(true);
+          void loadProducts(activeTab);
+        }}
+      />
+
+      <EditProductModal
+        product={editingProduct}
+        open={editingProduct !== null}
+        onClose={() => setEditingProduct(null)}
+        onSuccess={() => {
+          setInventoryToastVisible(true);
+          void loadProducts(activeTab);
+        }}
+      />
+
+      <Toast
+        message="Product added successfully"
+        visible={addToastVisible}
+        onDismiss={() => setAddToastVisible(false)}
+      />
+
+      <Toast
+        message="Inventory updated successfully"
+        visible={inventoryToastVisible}
+        onDismiss={() => setInventoryToastVisible(false)}
+      />
     </div>
   );
 }

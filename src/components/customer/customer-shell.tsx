@@ -19,6 +19,7 @@ interface CustomerShellProps {
   quickActions?: React.ReactNode;
   footer?: React.ReactNode;
   headerExtra?: React.ReactNode;
+  navigationBlocked?: boolean;
 }
 
 export function CustomerShell({
@@ -29,17 +30,30 @@ export function CustomerShell({
   quickActions,
   footer,
   headerExtra,
+  navigationBlocked = false,
 }: CustomerShellProps) {
   return (
-    <div className="chat-shell flex w-full flex-col bg-[var(--whatsapp-bg)]">
+    <div className="chat-shell flex w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-[var(--whatsapp-bg)]">
       <header className="flex h-[52px] w-full shrink-0 items-center gap-2.5 bg-[#075e54] px-3 shadow-md md:px-4 lg:px-6 safe-top">
-        <Link
-          href={backHref}
-          className="rounded-full p-1.5 text-white/90 transition-colors hover:bg-white/10"
-          aria-label={backLabel}
-        >
-          <ArrowLeft className="size-5" />
-        </Link>
+        {navigationBlocked ? (
+          <button
+            type="button"
+            disabled
+            className="rounded-full p-1.5 text-white/40"
+            aria-label={backLabel}
+            title="Please wait while your screenshot uploads"
+          >
+            <ArrowLeft className="size-5" />
+          </button>
+        ) : (
+          <Link
+            href={backHref}
+            className="rounded-full p-1.5 text-white/90 transition-colors hover:bg-white/10"
+            aria-label={backLabel}
+          >
+            <ArrowLeft className="size-5" />
+          </Link>
+        )}
 
         <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#128c7e] text-[11px] font-bold text-white">
           {STORE_INITIALS}
@@ -64,7 +78,7 @@ export function CustomerShell({
         </div>
       </header>
 
-      <div className="whatsapp-pattern flex-1 overflow-y-auto px-2 py-2 md:px-4 lg:px-6">
+      <div className="whatsapp-pattern min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-2 py-2 md:px-4 lg:px-6">
         {children}
       </div>
 
@@ -93,7 +107,7 @@ export function CustomerCard({
   return (
     <div
       className={cn(
-        "rounded-[18px_18px_18px_4px] bg-white px-2.5 py-1.5 shadow-sm",
+        "rounded-[18px_18px_18px_4px] bg-white px-2.5 py-1.5 shadow-sm min-w-0 overflow-hidden",
         className,
       )}
     >
@@ -154,7 +168,7 @@ export function CustomerPrimaryButton({
     <button
       type="button"
       className={cn(
-        "flex h-10 w-full items-center justify-center rounded-full bg-[#128c7e] text-sm font-semibold text-white transition-colors hover:bg-[#075e54] disabled:opacity-50",
+        "flex h-10 w-full items-center justify-center rounded-full bg-[#128c7e] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#075e54] disabled:opacity-50",
         className,
       )}
       {...props}
@@ -168,11 +182,27 @@ export function CustomerPrimaryLink({
   href,
   children,
   className,
+  disabled,
 }: {
   href: string;
   children: React.ReactNode;
   className?: string;
+  disabled?: boolean;
 }) {
+  if (disabled) {
+    return (
+      <span
+        className={cn(
+          "flex h-10 w-full items-center justify-center rounded-full bg-[#128c7e] text-sm font-semibold text-white opacity-50",
+          className,
+        )}
+        aria-disabled="true"
+      >
+        {children}
+      </span>
+    );
+  }
+
   return (
     <Link
       href={href}

@@ -69,14 +69,6 @@ export function saveVaartaProfile(data: {
 }
 
 export function clearCustomerSession() {
-  const conversationId =
-    typeof window !== "undefined"
-      ? localStorage.getItem(VAARTA_KEYS.conversationId)
-      : null;
-
   Object.values(VAARTA_KEYS).forEach((key) => localStorage.removeItem(key));
-
-  if (conversationId) {
-    clearChatStateCache(conversationId);
-  }
+  clearChatStateCache();
 }

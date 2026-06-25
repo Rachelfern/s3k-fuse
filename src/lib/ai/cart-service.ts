@@ -11,16 +11,17 @@ import {
   selectRecommendationProducts,
   validateRecommendationIds,
 } from "@/lib/ai/product-catalog";
+import { extractProductSearchQuery } from "@/lib/ai/product-query";
 import { buildStoreAssistantRules } from "@/lib/ai/prompts/store-assistant";
 import { sanitizeAssistantResponse } from "@/lib/ai/response-validation";
-import { normalizeQuery } from "@/lib/hinglish";
+import { normalizeCommerceMessage } from "@/lib/hinglish";
 import {
   buildStockGroundedList,
   fetchInStockProducts,
   PRICE_INTEGRITY_RULE,
   STOCK_GROUNDING_RULE,
 } from "@/lib/ai/product-grounding";
-import { groqChat } from "@/lib/ai/groq-client";
+import { groqChat, NO_MATCHING_PRODUCTS_MESSAGE } from "@/lib/ai/groq-client";
 import { isGroqEnabled } from "@/lib/ai/groq-config";
 import { parseCartWithGroq } from "@/lib/ai/groq-cart-parser";
 import {
@@ -31,11 +32,18 @@ import {
 } from "@/lib/ai/cart-remove-parser";
 import { isPopularProductsQuery } from "@/lib/ai/product-catalog";
 import {
+  buildHighProteinRecommendationIntro,
+  isHighProteinRecommendationRequest,
+} from "@/lib/ai/nutrition-recommendations";
+import {
   classifyCustomerIntent,
   detectCommerceIntent,
   encodeCartConfirmIntent,
   encodeCartClarifyIntent,
   encodeRecommendationIntent,
+  isBasketRecommendationRequest,
+  isExplicitProductCartRequest,
+  isRecommendationRequest,
   logCommerceIntent,
   parseCartConfirmMessage,
   parseCartPickMessage,
@@ -206,7 +214,8 @@ export async function getProductRecommendations(input: {
     return { success: false };
   }
 
-  const normalizedMessage = normalizeQuery(input.message);
+  const normalizedMessage = normalizeCommerceMessage(input.message);
+  const extractedQuery = extractProductSearchQuery(input.message);
   const bestSellerIds = await fetchBestSellerProductIds(input.supabase, 4);
   const selectedProducts = selectRecommendationProducts({
     message: normalizedMessage,
@@ -220,11 +229,22 @@ export async function getProductRecommendations(input: {
     products,
   );
 
+  console.log("[PRODUCT_SEARCH]", {
+    detectedIntent: "product_recommendation",
+    extractedQuery,
+    normalizedQuery: normalizedMessage,
+    productsReturned: productIds.length,
+    productIds,
+  });
+
   if (productIds.length === 0) {
     return { success: false };
   }
 
-  catalogDebug("customer_query", { query: normalizedMessage });
+  catalogDebug("customer_query", {
+    query: normalizedMessage,
+    extractedQuery,
+  });
   catalogDebug(
     "recommended_products",
     productIds.map((id) => {
@@ -237,9 +257,14 @@ export async function getProductRecommendations(input: {
   let footer =
     "Tap Add to Cart on any item you'd like, or ask for more recommendations.";
 
+  if (isHighProteinRecommendationRequest(normalizedMessage)) {
+    intro = buildHighProteinRecommendationIntro(selectedProducts);
+  }
+
   const skipGroq =
     input.allowGroq === false ||
     isPopularProductsQuery(normalizedMessage) ||
+    isHighProteinRecommendationRequest(normalizedMessage) ||
     !isGroqEnabled();
 
   if (!skipGroq) {
@@ -300,7 +325,7 @@ export async function parseCustomerCartRemove(input: {
     return { success: false, notAnOrder: true };
   }
 
-  const normalizedMessage = normalizeQuery(input.message);
+  const normalizedMessage = normalizeCommerceMessage(input.message);
   const removeRequest = parseRemoveRequest(normalizedMessage);
 
   if (!removeRequest) {
@@ -510,7 +535,7 @@ export async function parseCustomerCart(input: {
   }
 
   const products = await fetchInStockProducts(input.supabase);
-  const normalizedMessage = normalizeQuery(input.message);
+  const normalizedMessage = normalizeCommerceMessage(input.message);
 
   const confirmItems = parseCartConfirmMessage(normalizedMessage);
   if (confirmItems) {
@@ -575,11 +600,22 @@ export async function parseCustomerCart(input: {
       });
     }
 
-    return {
-      success: false,
-      needsClarification: true,
-      message: parsedIntent.message,
-    };
+    if (isExplicitProductCartRequest(normalizedMessage)) {
+      if (
+        isRecommendationRequest(normalizedMessage) ||
+        isBasketRecommendationRequest(normalizedMessage)
+      ) {
+        return { success: false, notAnOrder: true };
+      }
+
+      return {
+        success: false,
+        needsClarification: true,
+        message: NO_MATCHING_PRODUCTS_MESSAGE,
+      };
+    }
+
+    return { success: false, notAnOrder: true };
   }
 
   if (parsedIntent.status === "ambiguous") {
@@ -598,21 +634,21 @@ export async function parseCustomerCart(input: {
   }
 
   if (parsedIntent.status === "confirm") {
-    const line = parsedIntent.lines[0];
     return {
       success: false,
       needsConfirmation: true,
       message: parsedIntent.message,
-      intent: encodeCartConfirmIntent([
-        { productId: line.product.id, quantity: line.quantity },
-      ]),
-      items: [
-        {
-          product_id: line.product.id,
-          name_en: line.product.name_en,
+      intent: encodeCartConfirmIntent(
+        parsedIntent.lines.map((line) => ({
+          productId: line.product.id,
           quantity: line.quantity,
-        },
-      ],
+        })),
+      ),
+      items: parsedIntent.lines.map((line) => ({
+        product_id: line.product.id,
+        name_en: line.product.name_en,
+        quantity: line.quantity,
+      })),
     };
   }
 
@@ -639,7 +675,7 @@ async function applyCartLines(input: {
     return {
       success: false,
       needsClarification: true,
-      message: "I couldn't match those items to our catalog. Could you try again?",
+      message: NO_MATCHING_PRODUCTS_MESSAGE,
     };
   }
 

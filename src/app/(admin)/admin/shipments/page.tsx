@@ -1,55 +1,50 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { AdminDateTimeCell } from "@/components/admin/admin-datetime-cell";
+import { ShipmentStatusDropdown } from "@/components/admin/shipment-status-dropdown";
 import { ConnectionErrorBanner } from "@/components/ui/connection-error-banner";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { Button } from "@/components/ui/button";
 import type { ShipmentRow } from "@/lib/admin/shipments-list";
+import {
+  formatAdminCustomerLabel,
+  getAdminCustomerTooltip,
+} from "@/lib/admin/order-utils";
+import {
+  formatShipmentStatusLabel,
+  normalizeLogisticsShipmentStatus,
+} from "@/lib/orders/order-lifecycle";
 import { mapShipmentStatusFromDb } from "@/lib/orders/shipment-status-compat";
 import type { PaymentStatus, ShipmentStatus } from "@/lib/types";
-import {
-  isShipmentBlockedForOrder,
-  SHIPMENT_STATUS_BLOCKED_TOOLTIP,
-} from "@/lib/admin/order-utils";
 import type { PaymentMethod } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
-type ShipmentFilter = "all" | ShipmentStatus;
+type ShipmentFilter = "all" | "packed" | "in_transit" | "delivered";
 
 const FILTER_PILLS: { key: ShipmentFilter; label: string }[] = [
   { key: "all", label: "All" },
-  { key: "awaiting_payment", label: "Awaiting Payment" },
   { key: "packed", label: "Packed" },
   { key: "in_transit", label: "In Transit" },
   { key: "delivered", label: "Delivered" },
 ];
 
-const STATUS_OPTIONS: { value: ShipmentStatus; label: string }[] = [
-  { value: "awaiting_payment", label: "Awaiting Payment" },
-  { value: "packed", label: "Packed" },
-  { value: "in_transit", label: "In Transit" },
-  { value: "delivered", label: "Delivered" },
-];
-
-const SHIPMENT_CHIP_STYLES: Record<ShipmentStatus, string> = {
-  awaiting_payment: "bg-amber-100 text-amber-700",
-  assigned: "bg-gray-100 text-gray-700",
+const SHIPMENT_CHIP_STYLES: Record<
+  "packed" | "in_transit" | "delivered",
+  string
+> = {
   packed: "bg-purple-100 text-purple-700",
   in_transit: "bg-blue-100 text-blue-700",
   delivered: "bg-green-100 text-green-700",
 };
 
-function formatStatusLabel(status: ShipmentStatus): string {
-  return status.replace(/_/g, " ");
-}
-
-function getCustomerLabel(row: ShipmentRow): string {
-  return row.customer_name ?? row.customer_phone ?? "Unknown customer";
-}
+const STICKY_ACTIONS_CLASS =
+  "sticky right-0 z-20 bg-white shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]";
+const STICKY_ACTIONS_HEADER_CLASS =
+  "sticky right-0 z-20 bg-gray-50 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]";
 
 function mapOrderRow(row: {
   id: string;
@@ -114,120 +109,26 @@ async function updateShipmentStatusViaApi(
 }
 
 function ShipmentStatusChip({ status }: { status: ShipmentStatus }) {
+  const logisticsStatus = normalizeLogisticsShipmentStatus(status);
+
   return (
     <span
       className={cn(
-        "inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium capitalize",
-        SHIPMENT_CHIP_STYLES[status],
+        "inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium",
+        SHIPMENT_CHIP_STYLES[logisticsStatus],
       )}
     >
-      {formatStatusLabel(status)}
+      {formatShipmentStatusLabel(logisticsStatus)}
     </span>
   );
 }
 
-interface StatusChangeDropdownProps {
-  orderId: string;
-  currentStatus: ShipmentStatus;
-  paymentMethod: PaymentMethod;
-  paymentStatus: PaymentStatus;
-  flashSuccess: boolean;
-  onStatusChange: (orderId: string, status: ShipmentStatus) => Promise<void>;
-}
-
-function StatusChangeDropdown({
-  orderId,
-  currentStatus,
-  paymentMethod,
-  paymentStatus,
-  flashSuccess,
-  onStatusChange,
-}: StatusChangeDropdownProps) {
-  const [open, setOpen] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const shipmentBlocked = isShipmentBlockedForOrder(paymentMethod, paymentStatus);
-
-  useEffect(() => {
-    if (!open) return;
-
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open]);
-
-  async function handleSelect(status: ShipmentStatus) {
-    if (status === currentStatus) {
-      setOpen(false);
-      return;
-    }
-
-    setUpdating(true);
-    try {
-      await onStatusChange(orderId, status);
-      setOpen(false);
-    } finally {
-      setUpdating(false);
-    }
-  }
-
-  const currentLabel =
-    STATUS_OPTIONS.find((option) => option.value === currentStatus)?.label ??
-    formatStatusLabel(currentStatus);
-
-  return (
-    <div
-      ref={containerRef}
-      className={cn(
-        "relative rounded-md transition-colors duration-300",
-        flashSuccess && "bg-green-100",
-      )}
-      title={shipmentBlocked ? SHIPMENT_STATUS_BLOCKED_TOOLTIP : undefined}
-    >
-      <button
-        type="button"
-        disabled={updating || shipmentBlocked}
-        onClick={() => setOpen((value) => !value)}
-        className="flex w-full min-w-[140px] items-center justify-between gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-left text-sm text-gray-700 transition-colors hover:border-gray-300 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <span className="truncate">{currentLabel}</span>
-        <ChevronDown
-          className={cn(
-            "size-4 shrink-0 text-gray-400 transition-transform",
-            open && "rotate-180",
-          )}
-        />
-      </button>
-
-      {open ? (
-        <div className="absolute right-0 z-20 mt-1 min-w-full overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-lg">
-          {STATUS_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => void handleSelect(option.value)}
-              className={cn(
-                "flex w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50",
-                option.value === currentStatus
-                  ? "bg-blue-50 font-medium text-blue-700"
-                  : "text-gray-700",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
+function matchesShipmentFilter(
+  row: ShipmentRow,
+  filter: ShipmentFilter,
+): boolean {
+  if (filter === "all") return true;
+  return normalizeLogisticsShipmentStatus(row.shipment_status) === filter;
 }
 
 export default function AdminShipmentsPage() {
@@ -299,7 +200,7 @@ export default function AdminShipmentsPage() {
             ? updateError.message
             : "Failed to update shipment status.";
         setError(message);
-        throw updateError;
+        return;
       }
 
       setShipments((current) =>
@@ -408,21 +309,20 @@ export default function AdminShipmentsPage() {
     };
   }, [applyRealtimeOrder, loadShipments]);
 
-  const filteredShipments =
-    activeFilter === "all"
-      ? shipments
-      : shipments.filter((row) => row.shipment_status === activeFilter);
+  const filteredShipments = shipments.filter((row) =>
+    matchesShipmentFilter(row, activeFilter),
+  );
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="admin-page">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">
             Logistics & Shipments
           </h2>
           <p className="mt-1 text-sm text-gray-500">
-            Monitor dispatches, tracking IDs, and courier delivery statuses in
-            real-time.
+            Manage courier assignments, tracking IDs, and delivery status. Payment
+            is handled from Orders.
           </p>
         </div>
 
@@ -476,19 +376,33 @@ export default function AdminShipmentsPage() {
           : `${filteredShipments.length} shipment${filteredShipments.length === 1 ? "" : "s"} found`}
       </p>
 
-      <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              <col className="w-[7rem]" />
+              <col className="w-[5.5rem]" />
+              <col className="w-[5rem]" />
+              <col className="w-[6rem]" />
+              <col className="w-[7rem]" />
+              <col className="w-[6.5rem]" />
+              <col />
+              <col className="w-[12.5rem]" />
+            </colgroup>
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50/80 text-left text-xs font-medium uppercase tracking-wide text-gray-500">
-                <th className="px-5 py-3">Order ID</th>
-                <th className="px-5 py-3">Customer</th>
-                <th className="px-5 py-3">Courier Partner</th>
-                <th className="px-5 py-3">Tracking Reference</th>
-                <th className="min-w-[7.5rem] whitespace-nowrap px-5 py-3">Created Date</th>
-                <th className="px-5 py-3">Shipment Status</th>
-                <th className="px-5 py-3">Logistics Notes</th>
-                <th className="px-5 py-3">Change Status</th>
+                <th className="px-3 py-3">Order ID</th>
+                <th className="px-3 py-3">Customer</th>
+                <th className="px-3 py-3">Courier Partner</th>
+                <th className="px-3 py-3">Tracking Reference</th>
+                <th className="whitespace-nowrap px-3 py-3">Created Date</th>
+                <th className="px-3 py-3">Shipment Status</th>
+                <th className="px-3 py-3">Logistics Notes</th>
+                <th
+                  className={cn("px-3 py-3", STICKY_ACTIONS_HEADER_CLASS)}
+                >
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -506,44 +420,69 @@ export default function AdminShipmentsPage() {
                   </td>
                 </tr>
               ) : (
-                filteredShipments.map((row) => (
-                  <tr
-                    key={row.id}
-                    className="border-b border-gray-100 last:border-0"
-                  >
-                    <td className="px-5 py-4 font-medium text-gray-900">
-                      {row.id}
-                    </td>
-                    <td className="px-5 py-4 text-gray-700">
-                      {getCustomerLabel(row)}
-                    </td>
-                    <td className="px-5 py-4 font-medium text-gray-900">
-                      {row.delivery_courier ?? "Pending assignment"}
-                    </td>
-                    <td className="px-5 py-4 font-mono text-xs text-gray-600">
-                      {row.tracking_id}
-                    </td>
-                    <td className="min-w-[7.5rem] whitespace-nowrap px-5 py-4">
-                      <AdminDateTimeCell iso={row.created_at} />
-                    </td>
-                    <td className="px-5 py-4">
-                      <ShipmentStatusChip status={row.shipment_status} />
-                    </td>
-                    <td className="max-w-[200px] truncate px-5 py-4 text-gray-600">
-                      {row.notes ?? "—"}
-                    </td>
-                    <td className="px-5 py-4">
-                      <StatusChangeDropdown
-                        orderId={row.id}
-                        currentStatus={row.shipment_status}
-                        paymentMethod={row.payment_method}
-                        paymentStatus={row.payment_status}
-                        flashSuccess={successFlashIds.has(row.id)}
-                        onStatusChange={handleStatusChange}
-                      />
-                    </td>
-                  </tr>
-                ))
+                filteredShipments.map((row) => {
+                  const customerLabel = formatAdminCustomerLabel(
+                    row.customer_name,
+                    row.customer_phone,
+                  );
+                  const customerTooltip = getAdminCustomerTooltip(
+                    row.customer_name,
+                    row.customer_phone,
+                  );
+                  const notesText = row.notes?.trim() || "—";
+
+                  return (
+                    <tr
+                      key={row.id}
+                      className="border-b border-gray-100 last:border-0"
+                    >
+                      <td
+                        className="max-w-0 truncate px-3 py-3 font-medium text-gray-900"
+                        title={row.id}
+                      >
+                        {row.id}
+                      </td>
+                      <td
+                        className="max-w-0 truncate px-3 py-3 text-gray-700"
+                        title={customerTooltip ?? customerLabel}
+                      >
+                        {customerLabel}
+                      </td>
+                      <td
+                        className="max-w-0 truncate px-3 py-3 font-medium text-gray-900"
+                        title={row.delivery_courier ?? undefined}
+                      >
+                        {row.delivery_courier ?? "Pending assignment"}
+                      </td>
+                      <td
+                        className="max-w-0 truncate px-3 py-3 font-mono text-xs text-gray-600"
+                        title={row.tracking_id}
+                      >
+                        {row.tracking_id}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3">
+                        <AdminDateTimeCell iso={row.created_at} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <ShipmentStatusChip status={row.shipment_status} />
+                      </td>
+                      <td
+                        className="max-w-0 truncate px-3 py-3 text-gray-600"
+                        title={notesText !== "—" ? notesText : undefined}
+                      >
+                        {notesText}
+                      </td>
+                      <td className={cn("px-3 py-3", STICKY_ACTIONS_CLASS)}>
+                        <ShipmentStatusDropdown
+                          orderId={row.id}
+                          currentStatus={row.shipment_status}
+                          flashSuccess={successFlashIds.has(row.id)}
+                          onStatusChange={handleStatusChange}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

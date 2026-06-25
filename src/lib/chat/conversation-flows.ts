@@ -1,5 +1,9 @@
-import { isCartViewRequest, isProductCatalogRequest } from "@/lib/ai/message-intent";
+import { isCartViewRequest, isProductCatalogRequest, isTrackOrderRequest, isTrackReturnRequest, parseTrackReturnRequestId } from "@/lib/ai/message-intent";
+import { encodeReturnTrackingIntent } from "@/lib/chat/return-intents";
+import { commerceMessageCandidates } from "@/lib/hinglish";
 import { DEFAULT_DELIVERY_FEE } from "@/lib/orders/create-order";
+import { fetchTrackableReturnForCustomer } from "@/lib/orders/return-management-service";
+import { formatReturnTrackingSummary } from "@/lib/orders/return-tracking-flow";
 import { formatShipmentStatusLabel } from "@/lib/orders/shipment-utils";
 import { CHAT_INTENTS, encodeOrderHistoryIntent } from "@/lib/chat/quick-replies";
 import type { Order, OrderStatus, PaymentStatus } from "@/lib/types";
@@ -9,6 +13,7 @@ import type { Database } from "@/lib/types";
 export type ConversationFlowIntent =
   | "VIEW_CART"
   | "TRACK_ORDER"
+  | "TRACK_RETURN"
   | "ORDER_HISTORY"
   | "CHECKOUT"
   | "PAY_NOW"
@@ -16,11 +21,13 @@ export type ConversationFlowIntent =
   | "CONTACT_SUPPORT"
   | "REFRESH_STATUS"
   | "BROWSE_PRODUCTS"
-  | "REORDER";
+  | "REORDER"
+  | "CHANGE_QUANTITY";
 
 export type ConversationFlowResult = {
   type: ConversationFlowIntent;
   orderId?: string;
+  returnRequestId?: string;
 };
 
 
@@ -47,14 +54,43 @@ function matchesBrowseProducts(message: string): boolean {
 }
 const REFRESH_STATUS_PATTERNS = [/^refresh status$/i];
 const REORDER_PATTERNS = [/^reorder$/i, /^order again$/i];
+const CHANGE_QUANTITY_PATTERNS = [
+  /^i'?d like a different quantity$/i,
+  /^change quantity$/i,
+  /^add one more$/i,
+  /^(?:add|get)\s+(?:one|1)\s+more$/i,
+];
 
 const TRACK_ORDER_PATTERNS = [
-  /^track(?:\s+(?:my\s+)?order)?(?:\s+(.+))?$/i,
-  /^track order$/i,
+  /^track(?:\s+(?:my\s+)?order)(?:\s+(.+))?$/i,
+  /^track order(?:\s+(.+))?$/i,
   /^where(?:'s| is) my order\??$/i,
+  /^order status$/i,
+  /^delivery status$/i,
+];
+
+const TRACK_RETURN_PATTERNS = [
+  /^track(?:\s+(?:my\s+)?return)(?:\s+(.+))?$/i,
+  /^track return(?:\s+(.+))?$/i,
+  /^where(?:'s| is) my return\??$/i,
+  /^return status$/i,
+  /^check(?:\s+my)?\s+return(?:\s+status)?$/i,
+  /^track_return\|(.+)$/i,
 ];
 
 export function classifyConversationFlow(message: string): ConversationFlowResult | null {
+  const candidates = commerceMessageCandidates(message);
+  if (candidates.length === 0) return null;
+
+  for (const candidate of candidates) {
+    const flow = classifyConversationFlowCandidate(candidate);
+    if (flow) return flow;
+  }
+
+  return null;
+}
+
+function classifyConversationFlowCandidate(message: string): ConversationFlowResult | null {
   const trimmed = message.trim();
 
   if (isCartViewRequest(trimmed)) {
@@ -69,8 +105,24 @@ export function classifyConversationFlow(message: string): ConversationFlowResul
     return { type: "REORDER" };
   }
 
-  const trackMatch = trimmed.match(TRACK_ORDER_PATTERNS[0]);
-  if (trackMatch || TRACK_ORDER_PATTERNS.slice(1).some((pattern) => pattern.test(trimmed))) {
+  if (CHANGE_QUANTITY_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return { type: "CHANGE_QUANTITY" };
+  }
+
+  if (CHANGE_QUANTITY_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return { type: "CHANGE_QUANTITY" };
+  }
+
+  if (isTrackReturnRequest(trimmed)) {
+    const explicitId = parseTrackReturnRequestId(trimmed);
+    const trackReturnMatch = trimmed.match(TRACK_RETURN_PATTERNS[0]);
+    const returnRequestId =
+      explicitId || trackReturnMatch?.[1]?.trim() || undefined;
+    return { type: "TRACK_RETURN", returnRequestId };
+  }
+
+  if (isTrackOrderRequest(trimmed)) {
+    const trackMatch = trimmed.match(TRACK_ORDER_PATTERNS[0]);
     const orderId = trackMatch?.[1]?.trim();
     return { type: "TRACK_ORDER", orderId: orderId || undefined };
   }
@@ -133,6 +185,8 @@ function formatPaymentStatus(status: PaymentStatus): string {
       return "Paid";
     case "pending":
       return "Pending";
+    case "verification_pending":
+      return "Verification Pending";
     case "failed":
       return "Failed";
     default:
@@ -167,7 +221,58 @@ export function formatOrderConfirmationMessage(
 Order ID: ${orderId}
 Amount: ${formatCurrency(totalAmount)}
 
+Status: Confirmed
+
 Your order has been placed successfully.`;
+}
+
+export function formatUpiPendingOrderMessage(
+  orderId: string,
+  totalAmount: number,
+): string {
+  return `📋 Order Received — UPI Verification Pending
+
+Order ID: ${orderId}
+Amount: ${formatCurrency(totalAmount)}
+
+Status: Verification Pending
+
+We've received your payment claim. Our team will verify your UPI payment shortly.`;
+}
+
+export function formatOrderDeliveredMessage(
+  orderId: string,
+  totalAmount: number,
+): string {
+  return `📬 Order Delivered
+
+Order ID: ${orderId}
+Amount: ${formatCurrency(totalAmount)}
+
+Status: Delivered
+
+Your order has arrived. We hope you enjoy your purchase.`;
+}
+
+export function formatOrderCancelledMessage(
+  orderId: string,
+  totalAmount: number,
+  reason?: string | null,
+): string {
+  const lines = [
+    `🚫 Order Cancelled`,
+    "",
+    `Order ID: ${orderId}`,
+    `Amount: ${formatCurrency(totalAmount)}`,
+    "",
+    "Status: Cancelled",
+    "",
+    reason?.trim()
+      ? `Reason: ${reason.trim()}`
+      : "This order has been cancelled.",
+  ];
+
+  return lines.join("\n");
 }
 
 export function formatOrderStatusMessage(order: Pick<
@@ -453,6 +558,30 @@ export async function handleConversationFlow(input: {
       };
     }
 
+    case "TRACK_RETURN": {
+      const returnRequest = await fetchTrackableReturnForCustomer(
+        customerId,
+        flow.returnRequestId,
+      );
+
+      if (!returnRequest) {
+        return {
+          content:
+            "You don't have an active return request to track yet.\n\nStart a return from your order or ask about our return policy.",
+          intent: CHAT_INTENTS.RETURN_REQUEST,
+          sender_type: "admin",
+          was_ai_drafted: false,
+        };
+      }
+
+      return {
+        content: formatReturnTrackingSummary(returnRequest),
+        intent: encodeReturnTrackingIntent(returnRequest.id),
+        sender_type: "admin",
+        was_ai_drafted: false,
+      };
+    }
+
     case "TRACK_ORDER": {
       const order = await fetchLatestOrder(
         supabase,
@@ -609,6 +738,15 @@ export async function handleConversationFlow(input: {
         cartSync: result.items,
       };
     }
+
+    case "CHANGE_QUANTITY":
+      return {
+        content:
+          "No problem — tell me the item and quantity (e.g. \"add 3 dal\" or \"add 2 paneer\").",
+        intent: "clarification",
+        sender_type: "admin",
+        was_ai_drafted: false,
+      };
 
     default:
       return null;

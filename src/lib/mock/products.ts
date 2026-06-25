@@ -76,6 +76,18 @@ export const mockProducts: MockProduct[] = [
     imageEmoji: "🍅",
     imageGradient: "from-red-400 to-rose-500",
   },
+  {
+    id: PRODUCT_IDS.chickenBreast,
+    business_id: BUSINESS_ID,
+    name: "Chicken Breast 500g",
+    description: "Lean boneless chicken breast — high protein",
+    price: 100,
+    rating: 4.8,
+    reviewCount: 267,
+    image_url: PRODUCT_IMAGE_URLS[PRODUCT_IDS.chickenBreast],
+    imageEmoji: "🍗",
+    imageGradient: "from-amber-500 to-orange-600",
+  },
 ];
 
 export const mockProductMap = Object.fromEntries(

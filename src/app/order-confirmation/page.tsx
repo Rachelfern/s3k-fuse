@@ -60,7 +60,7 @@ export default function OrderConfirmationPage() {
           <p className="mt-4 text-xs font-medium uppercase tracking-wide text-gray-400">
             Order ID
           </p>
-          <p className="font-mono text-sm font-semibold text-[var(--whatsapp-accent)]">
+          <p className="break-all font-mono text-sm font-semibold text-[var(--whatsapp-accent)]">
             {completedOrder.orderId}
           </p>
           <p className="mt-1 text-xs text-gray-500">
@@ -89,7 +89,7 @@ export default function OrderConfirmationPage() {
                 key={item.productId}
                 className="flex items-center justify-between gap-3"
               >
-                <span className="text-gray-900">
+                <span className="min-w-0 break-words text-gray-900">
                   {item.product.name} ×{item.quantity}
                 </span>
                 <span className="font-medium text-[var(--whatsapp-accent)]">
@@ -113,7 +113,7 @@ export default function OrderConfirmationPage() {
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between gap-3">
               <dt className="text-gray-500">UPI ID</dt>
-              <dd className="font-medium text-gray-900">
+              <dd className="break-all text-right font-medium text-gray-900">
                 {completedOrder.payment.upiId}
               </dd>
             </div>

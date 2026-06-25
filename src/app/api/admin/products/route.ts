@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import {
+  createProduct,
+  validateCreateProductInput,
+  type CreateProductInput,
+} from "@/lib/admin/create-product";
+import {
   fetchAdminProducts,
   type ProductFilter,
 } from "@/lib/admin/products-list";
@@ -37,5 +42,37 @@ export async function GET(request: Request) {
       { error: diagnoseSupabaseError(error) },
       { status: 500 },
     );
+  }
+}
+
+export async function POST(request: Request) {
+  const { user } = await requireAdminUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: CreateProductInput;
+  try {
+    body = (await request.json()) as CreateProductInput;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const validationError = validateCreateProductInput(body);
+  if (validationError) {
+    return NextResponse.json({ error: validationError }, { status: 400 });
+  }
+
+  try {
+    const product = await createProduct(body);
+    return NextResponse.json({ product }, { status: 201 });
+  } catch (error) {
+    console.error("[admin/products] create failed:", error);
+
+    const message =
+      error instanceof Error ? error.message : diagnoseSupabaseError(error);
+
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

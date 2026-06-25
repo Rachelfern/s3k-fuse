@@ -29,6 +29,8 @@ const STOP_WORDS = new Set([
   "for",
   "and",
   "with",
+  "aur",
+  "plus",
 ]);
 
 export type ProductSearchMatch = {

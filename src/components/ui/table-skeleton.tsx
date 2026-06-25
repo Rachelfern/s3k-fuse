@@ -3,9 +3,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 interface TableSkeletonProps {
   rows?: number;
   columns?: number;
+  /** Wrap rows in a full table — use outside an existing `<tbody>`. */
+  standalone?: boolean;
 }
 
-export function TableSkeleton({ rows = 5, columns = 6 }: TableSkeletonProps) {
+function TableSkeletonRows({
+  rows,
+  columns,
+}: Required<Pick<TableSkeletonProps, "rows" | "columns">>) {
   return (
     <>
       {Array.from({ length: rows }).map((_, rowIndex) => (
@@ -22,4 +27,22 @@ export function TableSkeleton({ rows = 5, columns = 6 }: TableSkeletonProps) {
       ))}
     </>
   );
+}
+
+export function TableSkeleton({
+  rows = 5,
+  columns = 6,
+  standalone = false,
+}: TableSkeletonProps) {
+  if (standalone) {
+    return (
+      <table className="w-full text-left text-sm">
+        <tbody>
+          <TableSkeletonRows rows={rows} columns={columns} />
+        </tbody>
+      </table>
+    );
+  }
+
+  return <TableSkeletonRows rows={rows} columns={columns} />;
 }

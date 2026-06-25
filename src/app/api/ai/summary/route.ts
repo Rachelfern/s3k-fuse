@@ -7,6 +7,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       conversationId?: string;
       conversation_id?: string;
+      forceRefresh?: boolean;
     };
 
     const conversationId = body.conversationId ?? body.conversation_id;
@@ -19,9 +20,21 @@ export async function POST(request: Request) {
     }
 
     const supabase = createServiceClient();
-    const result = await summarizeConversation(supabase, conversationId);
+    const result = await summarizeConversation(supabase, conversationId, {
+      forceRefresh: body.forceRefresh === true,
+    });
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      summary: result.summary,
+      nextBestAction: result.nextBestAction,
+      suggestedAction: result.suggestedAction,
+      suggestedDrafts: result.suggestedDrafts,
+      issueType: result.issueType,
+      priorityScore: result.priorityScore,
+      priorityLevel: result.priorityLevel,
+      customerIntent: result.customerIntent,
+      suggestedReply: result.suggestedReply,
+    });
   } catch (error) {
     console.error("[ERROR] AI summary failed:", error);
     return NextResponse.json(

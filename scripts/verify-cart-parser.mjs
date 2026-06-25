@@ -2,13 +2,27 @@ import assert from "node:assert/strict";
 import { parseCartIntent, extractProductQuery, extractRequestedQuantity } from "../src/lib/ai/cart-parser.ts";
 import { classifyCustomerIntent, detectCommerceIntent } from "../src/lib/ai/message-intent.ts";
 import { searchProductsForCart } from "../src/lib/ai/product-search.ts";
-import { extractProductEntity, normalizeWordQuantities } from "../src/lib/ai/product-entity-extraction.ts";
+import {
+  extractProductEntity,
+  extractProductSegments,
+  normalizeWordQuantities,
+  splitMultiProductMessage,
+} from "../src/lib/ai/product-entity-extraction.ts";
 import {
   parseRemoveRequest,
   findCartItemsForRemoval,
 } from "../src/lib/ai/cart-remove-parser.ts";
 
 const catalog = [
+  {
+    id: "mango",
+    name_en: "Alphonso Mango",
+    name_hi: "आम",
+    price: 34,
+    image_url: null,
+    description: "Sweet seasonal mangoes",
+    category: "Fruits",
+  },
   {
     id: "tomatoes",
     name_en: "Tomatoes 500g",
@@ -171,6 +185,68 @@ test("matches cart lines for removal using fuzzy search", () => {
   const matches = findCartItemsForRemoval("tomato", cartLines);
   assert.equal(matches.length, 1);
   assert.equal(matches[0].name_en, "Tomatoes 500g");
+});
+
+const multiProductCatalog = catalog.filter((item) => item.id !== "milk-500");
+
+const MULTI_PRODUCT_CASES = [
+  {
+    phrase: "do aam aur ek doodh chahiye",
+    lines: [
+      { name: "Alphonso Mango", quantity: 2 },
+      { name: "Farm Fresh Milk 1L", quantity: 1 },
+    ],
+  },
+  {
+    phrase: "2 mango and 1 milk",
+    lines: [
+      { name: "Alphonso Mango", quantity: 2 },
+      { name: "Farm Fresh Milk 1L", quantity: 1 },
+    ],
+  },
+  {
+    phrase: "ek doodh aur do kele",
+    lines: [
+      { name: "Farm Fresh Milk 1L", quantity: 1 },
+      { name: "Fresh Banana", quantity: 2 },
+    ],
+  },
+  {
+    phrase: "3 mangoes + 2 milk",
+    lines: [
+      { name: "Alphonso Mango", quantity: 3 },
+      { name: "Farm Fresh Milk 1L", quantity: 2 },
+    ],
+  },
+];
+
+for (const { phrase, lines: expectedLines } of MULTI_PRODUCT_CASES) {
+  test(`parses multi-product request "${phrase}"`, () => {
+    assert.equal(detectCommerceIntent(phrase), "CART_ADD");
+    assert.equal(splitMultiProductMessage(phrase).length, expectedLines.length);
+    const result = parseCartIntent(phrase, multiProductCatalog);
+    assert.equal(result.status, "ready", `status for: ${phrase}`);
+    assert.equal(result.lines.length, expectedLines.length, `line count for: ${phrase}`);
+    for (let index = 0; index < expectedLines.length; index += 1) {
+      assert.match(
+        result.lines[index].product.name_en,
+        new RegExp(expectedLines[index].name, "i"),
+        `product ${index} for: ${phrase}`,
+      );
+      assert.equal(
+        result.lines[index].quantity,
+        expectedLines[index].quantity,
+        `quantity ${index} for: ${phrase}`,
+      );
+    }
+  });
+}
+
+test("extractProductSegments returns one entity per product", () => {
+  const segments = extractProductSegments("do aam aur ek doodh chahiye");
+  assert.equal(segments.length, 2);
+  assert.equal(segments[0].productQuery, "mango");
+  assert.equal(segments[1].productQuery, "milk");
 });
 
 console.log("\nAll cart parser checks passed.");

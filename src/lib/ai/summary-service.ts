@@ -1,3 +1,8 @@
+import {
+  getConversationAiInsights,
+  updateConversationAiOps,
+  type ConversationAiInsights,
+} from "@/lib/ai/conversation-insights";
 import { ollamaChat } from "@/lib/ollama";
 import type { Database, Message } from "@/lib/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -7,8 +12,7 @@ export type SuggestedDraft = {
   text: string;
 };
 
-export type ConversationSummaryResult = {
-  summary: string;
+export type ConversationSummaryResult = ConversationAiInsights & {
   nextBestAction: string;
   suggestedDrafts: SuggestedDraft[];
 };
@@ -23,53 +27,10 @@ function formatMessagesForSummary(messages: Message[]): string {
     .join("\n");
 }
 
-export async function resolveNextBestActionLabel(
-  supabase: SupabaseClient<Database>,
-  customerId: string | null,
-): Promise<string> {
-  if (!customerId) return "Follow up with customer";
-
-  const [orderResult, cartResult] = await Promise.all([
-    supabase
-      .from("orders")
-      .select("status")
-      .eq("customer_id", customerId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from("carts")
-      .select("id")
-      .eq("customer_id", customerId)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle(),
-  ]);
-
-  if (orderResult.error) throw orderResult.error;
-  if (cartResult.error) throw cartResult.error;
-
-  const orderStatus = orderResult.data?.status;
-
-  if (orderStatus === "shipped") return "Monitor Shipment Status";
-  if (orderStatus === "payment_pending") return "Verify Payment UTR";
-
-  if (cartResult.data?.id) {
-    const { count, error } = await supabase
-      .from("cart_items")
-      .select("id", { count: "exact", head: true })
-      .eq("cart_id", cartResult.data.id);
-
-    if (error) throw error;
-    if ((count ?? 0) > 0) return "Confirm Cart and Send Invoice";
-  }
-
-  return "Follow up with customer";
-}
-
 async function generateSuggestedDrafts(
   transcript: string,
   nextBestAction: string,
+  suggestedReply: string,
   latestCustomerMessage: string | null,
 ): Promise<SuggestedDraft[]> {
   const contextHint = latestCustomerMessage
@@ -80,9 +41,9 @@ async function generateSuggestedDrafts(
     const raw = await ollamaChat(
       `You are a WhatsApp support agent for an Indian grocery store.
 Generate exactly 2 short reply drafts as JSON.
-Draft 1 label must be "General Support" (warm, helpful, under 2 sentences).
+Draft 1 label must be "Suggested Reply" with text based on: "${suggestedReply}"
 Draft 2 must be context-specific for this next action: "${nextBestAction}" (under 2 sentences).
-Return JSON only: {"drafts":[{"label":"General Support","text":"..."},{"label":"...","text":"..."}]}`,
+Return JSON only: {"drafts":[{"label":"Suggested Reply","text":"..."},{"label":"...","text":"..."}]}`,
       `${contextHint}\n\nConversation:\n${transcript}`,
       true,
     );
@@ -101,8 +62,8 @@ Return JSON only: {"drafts":[{"label":"General Support","text":"..."},{"label":"
 
   return [
     {
-      label: "General Support",
-      text: "Thanks for reaching out — I'm here to help with your order, delivery, or payment questions.",
+      label: "Suggested Reply",
+      text: suggestedReply,
     },
     {
       label: nextBestAction,
@@ -114,65 +75,86 @@ Return JSON only: {"drafts":[{"label":"General Support","text":"..."},{"label":"
 export async function summarizeConversation(
   supabase: SupabaseClient<Database>,
   conversationId: string,
+  options?: { forceRefresh?: boolean },
 ): Promise<ConversationSummaryResult> {
   const { data: conversation, error: conversationError } = await supabase
     .from("conversations")
-    .select("customer_id")
+    .select("customer_id, ai_insights_at")
     .eq("id", conversationId)
     .maybeSingle();
 
   if (conversationError) throw conversationError;
 
-  const { data: messages, error: messagesError } = await supabase
+  if (!options?.forceRefresh) {
+    const cached = await getConversationAiInsights(supabase, conversationId);
+    if (cached) {
+      const { data: messages } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      const chronological = [...(messages ?? [])].reverse();
+      const transcript = formatMessagesForSummary(chronological);
+      const latestCustomerMessage =
+        [...chronological]
+          .reverse()
+          .find((message) => message.sender_type === "customer")?.content ?? null;
+
+      const suggestedDrafts = await generateSuggestedDrafts(
+        transcript,
+        cached.suggestedAction,
+        cached.suggestedReply,
+        latestCustomerMessage,
+      );
+
+      return {
+        ...cached,
+        nextBestAction: cached.suggestedAction,
+        suggestedDrafts,
+      };
+    }
+  }
+
+  const { data: latestCustomerMsg } = await supabase
+    .from("messages")
+    .select("content")
+    .eq("conversation_id", conversationId)
+    .eq("sender_type", "customer")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const latestMessage =
+    latestCustomerMsg?.content ??
+    "Customer started a conversation.";
+
+  const insights = await updateConversationAiOps(supabase, {
+    conversationId,
+    customerId: conversation?.customer_id ?? "",
+    latestMessage,
+  });
+
+  const { data: messages } = await supabase
     .from("messages")
     .select("*")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(10);
 
-  if (messagesError) throw messagesError;
-
   const chronological = [...(messages ?? [])].reverse();
   const transcript = formatMessagesForSummary(chronological);
-
-  const latestCustomerMessage =
-    [...chronological]
-      .reverse()
-      .find((message) => message.sender_type === "customer")?.content ?? null;
-
-  let summary: string;
-
-  if (chronological.length === 0) {
-    summary = "No messages in this conversation yet.";
-  } else {
-    try {
-      summary = (
-        await ollamaChat(
-          "Summarize this WhatsApp business conversation in 2-3 sentences. Focus on: what the customer wants, current order status, and any pending actions needed from the business.",
-          transcript,
-        )
-      ).trim();
-    } catch {
-      summary =
-        latestCustomerMessage ??
-        "Customer has started a conversation. Awaiting more details.";
-    }
-  }
-
-  const nextBestAction = await resolveNextBestActionLabel(
-    supabase,
-    conversation?.customer_id ?? null,
-  );
-
   const suggestedDrafts = await generateSuggestedDrafts(
     transcript,
-    nextBestAction,
-    latestCustomerMessage,
+    insights.suggestedAction,
+    insights.suggestedReply,
+    latestMessage,
   );
 
   return {
-    summary,
-    nextBestAction,
+    ...insights,
+    nextBestAction: insights.suggestedAction,
     suggestedDrafts,
   };
 }

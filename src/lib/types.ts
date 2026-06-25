@@ -8,7 +8,13 @@ export type OrderStatus =
   | "shipped"
   | "delivered"
   | "cancelled";
-export type PaymentStatus = "pending" | "verified" | "failed";
+export type PaymentStatus =
+  | "pending"
+  | "verified"
+  | "failed"
+  | "verification_pending"
+  | "rejected"
+  | "retry_submitted";
 export type PaymentMethod = "upi" | "card" | "cod";
 export type ShipmentStatus =
   | "awaiting_payment"
@@ -17,6 +23,18 @@ export type ShipmentStatus =
   | "in_transit"
   | "delivered";
 export type UserRole = "admin" | "customer";
+
+export type AiIssueType =
+  | "NORMAL"
+  | "QUESTION"
+  | "ORDER_ISSUE"
+  | "PAYMENT_ISSUE"
+  | "REFUND_REQUEST"
+  | "COMPLAINT"
+  | "URGENT"
+  | "SUPPORT";
+
+export type AiPriorityLevel = "critical" | "high" | "normal";
 
 export type Business = {
   id: string;
@@ -38,6 +56,14 @@ export type Product = {
   created_at: string;
 };
 
+export type DeletionStatus = "pending_deletion" | "deleted";
+
+export type DpdpAuditEventType =
+  | "consent_given"
+  | "consent_withdrawn"
+  | "deletion_requested"
+  | "deletion_completed";
+
 export type Customer = {
   id: string;
   business_id: string | null;
@@ -47,6 +73,18 @@ export type Customer = {
   order_count: number;
   total_spent: number;
   consent_given: boolean;
+  dpdp_consent: boolean;
+  dpdp_consent_at: string | null;
+  deletion_status: DeletionStatus | null;
+  deleted_at: string | null;
+  created_at: string;
+};
+
+export type DpdpAuditLog = {
+  id: string;
+  customer_id: string;
+  event_type: DpdpAuditEventType;
+  metadata: Record<string, unknown>;
   created_at: string;
 };
 
@@ -56,7 +94,63 @@ export type Conversation = {
   customer_id: string | null;
   unread_count: number;
   last_message_at: string;
+  ai_issue_type: AiIssueType;
+  ai_priority_score: number;
+  ai_priority_level: AiPriorityLevel;
+  ai_summary: string | null;
+  ai_customer_intent: string | null;
+  ai_suggested_action: string | null;
+  ai_suggested_reply: string | null;
+  ai_insights_at: string | null;
+  needs_human_assistance?: boolean;
+  support_ticket_id?: string | null;
+  support_ticket_created_at?: string | null;
   created_at: string;
+};
+
+export type ReturnRequestStatus =
+  | "awaiting_reason"
+  | "awaiting_photo"
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "pickup_scheduled"
+  | "picked_up"
+  | "refunded";
+
+export type ReturnRequest = {
+  id: string;
+  order_id: string;
+  customer_id: string;
+  conversation_id: string | null;
+  request_type: "entire" | "partial";
+  status: ReturnRequestStatus;
+  reason: string | null;
+  photo_url: string | null;
+  customer_name: string | null;
+  pickup_address: string | null;
+  phone: string | null;
+  pickup_reference: string | null;
+  refund_reference: string | null;
+  reject_reason: string | null;
+  approved_at: string | null;
+  pickup_scheduled_at: string | null;
+  picked_up_at: string | null;
+  refunded_at: string | null;
+  rejected_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SupportTicket = {
+  id: string;
+  conversation_id: string;
+  customer_id: string;
+  order_id: string | null;
+  status: string;
+  subject: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Message = {
@@ -102,6 +196,13 @@ export type Order = {
   shipment_status: ShipmentStatus;
   delivery_address: string | null;
   notes: string | null;
+  payment_screenshot_url: string | null;
+  payment_screenshot_path: string | null;
+  payment_screenshot_uploaded_at: string | null;
+  payment_rejection_reason: string | null;
+  payment_rejected_at: string | null;
+  payment_verified_at: string | null;
+  payment_retry_submitted_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -194,6 +295,10 @@ export type Database = {
           order_count?: number;
           total_spent?: number;
           consent_given?: boolean;
+          dpdp_consent?: boolean;
+          dpdp_consent_at?: string | null;
+          deletion_status?: DeletionStatus | null;
+          deleted_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -205,6 +310,10 @@ export type Database = {
           order_count?: number;
           total_spent?: number;
           consent_given?: boolean;
+          dpdp_consent?: boolean;
+          dpdp_consent_at?: string | null;
+          deletion_status?: DeletionStatus | null;
+          deleted_at?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -212,6 +321,31 @@ export type Database = {
             foreignKeyName: "customers_business_id_fkey";
             columns: ["business_id"];
             referencedRelation: "businesses";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      dpdp_audit_log: {
+        Row: DpdpAuditLog;
+        Insert: {
+          id?: string;
+          customer_id: string;
+          event_type: DpdpAuditEventType;
+          metadata?: Record<string, unknown>;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          customer_id?: string;
+          event_type?: DpdpAuditEventType;
+          metadata?: Record<string, unknown>;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "dpdp_audit_log_customer_id_fkey";
+            columns: ["customer_id"];
+            referencedRelation: "customers";
             referencedColumns: ["id"];
           },
         ];
@@ -224,6 +358,17 @@ export type Database = {
           customer_id?: string | null;
           unread_count?: number;
           last_message_at?: string;
+          ai_issue_type?: AiIssueType;
+          ai_priority_score?: number;
+          ai_priority_level?: AiPriorityLevel;
+          ai_summary?: string | null;
+          ai_customer_intent?: string | null;
+          ai_suggested_action?: string | null;
+          ai_suggested_reply?: string | null;
+          ai_insights_at?: string | null;
+          needs_human_assistance?: boolean;
+          support_ticket_id?: string | null;
+          support_ticket_created_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -232,6 +377,17 @@ export type Database = {
           customer_id?: string | null;
           unread_count?: number;
           last_message_at?: string;
+          ai_issue_type?: AiIssueType;
+          ai_priority_score?: number;
+          ai_priority_level?: AiPriorityLevel;
+          ai_summary?: string | null;
+          ai_customer_intent?: string | null;
+          ai_suggested_action?: string | null;
+          ai_suggested_reply?: string | null;
+          ai_insights_at?: string | null;
+          needs_human_assistance?: boolean;
+          support_ticket_id?: string | null;
+          support_ticket_created_at?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -360,6 +516,13 @@ export type Database = {
           shipment_status?: ShipmentStatus;
           delivery_address?: string | null;
           notes?: string | null;
+          payment_screenshot_url?: string | null;
+          payment_screenshot_path?: string | null;
+          payment_screenshot_uploaded_at?: string | null;
+          payment_rejection_reason?: string | null;
+          payment_rejected_at?: string | null;
+          payment_verified_at?: string | null;
+          payment_retry_submitted_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -379,6 +542,13 @@ export type Database = {
           shipment_status?: ShipmentStatus;
           delivery_address?: string | null;
           notes?: string | null;
+          payment_screenshot_url?: string | null;
+          payment_screenshot_path?: string | null;
+          payment_screenshot_uploaded_at?: string | null;
+          payment_rejection_reason?: string | null;
+          payment_rejected_at?: string | null;
+          payment_verified_at?: string | null;
+          payment_retry_submitted_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -439,6 +609,104 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      return_requests: {
+        Row: ReturnRequest;
+        Insert: {
+          id?: string;
+          order_id: string;
+          customer_id: string;
+          conversation_id?: string | null;
+          request_type: "entire" | "partial";
+          status?: ReturnRequestStatus;
+          reason?: string | null;
+          photo_url?: string | null;
+          customer_name?: string | null;
+          pickup_address?: string | null;
+          phone?: string | null;
+          pickup_reference?: string | null;
+          refund_reference?: string | null;
+          reject_reason?: string | null;
+          approved_at?: string | null;
+          pickup_scheduled_at?: string | null;
+          picked_up_at?: string | null;
+          refunded_at?: string | null;
+          rejected_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          order_id?: string;
+          customer_id?: string;
+          conversation_id?: string | null;
+          request_type?: "entire" | "partial";
+          status?: ReturnRequestStatus;
+          reason?: string | null;
+          photo_url?: string | null;
+          customer_name?: string | null;
+          pickup_address?: string | null;
+          phone?: string | null;
+          pickup_reference?: string | null;
+          refund_reference?: string | null;
+          reject_reason?: string | null;
+          approved_at?: string | null;
+          pickup_scheduled_at?: string | null;
+          picked_up_at?: string | null;
+          refunded_at?: string | null;
+          rejected_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      return_request_items: {
+        Row: {
+          id: string;
+          return_request_id: string;
+          product_id: string | null;
+          product_name: string;
+          quantity: number;
+        };
+        Insert: {
+          id?: string;
+          return_request_id: string;
+          product_id?: string | null;
+          product_name: string;
+          quantity?: number;
+        };
+        Update: {
+          id?: string;
+          return_request_id?: string;
+          product_id?: string | null;
+          product_name?: string;
+          quantity?: number;
+        };
+        Relationships: [];
+      };
+      support_tickets: {
+        Row: SupportTicket;
+        Insert: {
+          id?: string;
+          conversation_id: string;
+          customer_id: string;
+          order_id?: string | null;
+          status?: string;
+          subject?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          conversation_id?: string;
+          customer_id?: string;
+          order_id?: string | null;
+          status?: string;
+          subject?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
       };
     };
     Views: {

@@ -10,9 +10,12 @@ import { isMissingColumnError } from "@/lib/supabase/errors";
 import { executeOrderUpdate } from "@/lib/orders/order-update";
 import {
   OrderStateValidationError,
+  isCodOrder,
   resolvePaymentMethod,
+  validateAdminOrderDetailUpdate,
   validateOrderFieldsUpdate,
 } from "@/lib/orders/order-lifecycle";
+import { notifyCustomerOfCodCollectionFailure } from "@/lib/orders/cod-collection-flow";
 import { mapShipmentStatusFromDb } from "@/lib/orders/shipment-status-compat";
 
 export type OrderUpdate = Database["public"]["Tables"]["orders"]["Update"];
@@ -39,7 +42,13 @@ export interface OrderDetail {
   shipment_status: ShipmentStatus;
   delivery_address: string | null;
   notes: string | null;
+  payment_screenshot_path: string | null;
+  payment_screenshot_uploaded_at: string | null;
+  payment_rejection_reason: string | null;
+  payment_rejected_at: string | null;
+  payment_retry_submitted_at: string | null;
   created_at: string;
+  customer_id: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   customer_address: string | null;
@@ -61,19 +70,35 @@ type OrderDetailRow = {
   delivery_fee: number;
   payment_utr: string | null;
   payment_status: PaymentStatus;
+  customer_id: string | null;
   payment_method?: PaymentMethod | null;
   delivery_courier: string | null;
   tracking_id: string | null;
   shipment_status: string;
   delivery_address: string | null;
   notes: string | null;
+  payment_screenshot_path?: string | null;
+  payment_screenshot_uploaded_at?: string | null;
+  payment_rejection_reason?: string | null;
+  payment_rejected_at?: string | null;
+  payment_retry_submitted_at?: string | null;
   created_at: string;
   customers: { name: string | null; phone: string | null; address: string | null } | null;
   carts: { cart_items: CartItemEmbed[] | null } | null;
 };
 
-function buildOrderDetailSelect(includePaymentMethod: boolean): string {
-  const paymentMethodField = includePaymentMethod ? "payment_method," : "";
+function buildOrderDetailSelect(options: {
+  includePaymentMethod: boolean;
+  includePaymentScreenshot: boolean;
+  includePaymentRejection: boolean;
+}): string {
+  const paymentMethodField = options.includePaymentMethod ? "payment_method," : "";
+  const paymentScreenshotFields = options.includePaymentScreenshot
+    ? "payment_screenshot_path,\n      payment_screenshot_uploaded_at,"
+    : "";
+  const paymentRejectionFields = options.includePaymentRejection
+    ? "payment_rejection_reason,\n      payment_rejected_at,\n      payment_retry_submitted_at,"
+    : "";
 
   return `
       id,
@@ -82,12 +107,15 @@ function buildOrderDetailSelect(includePaymentMethod: boolean): string {
       delivery_fee,
       payment_utr,
       payment_status,
+      customer_id,
       ${paymentMethodField}
       delivery_courier,
       tracking_id,
       shipment_status,
       delivery_address,
       notes,
+      ${paymentScreenshotFields}
+      ${paymentRejectionFields}
       created_at,
       customers ( name, phone, address ),
       carts (
@@ -131,7 +159,13 @@ function mapOrderDetailRow(data: OrderDetailRow): OrderDetail {
     shipment_status: mapShipmentStatusFromDb(data.shipment_status),
     delivery_address: data.delivery_address,
     notes: data.notes,
+    payment_screenshot_path: data.payment_screenshot_path ?? null,
+    payment_screenshot_uploaded_at: data.payment_screenshot_uploaded_at ?? null,
+    payment_rejection_reason: data.payment_rejection_reason ?? null,
+    payment_rejected_at: data.payment_rejected_at ?? null,
+    payment_retry_submitted_at: data.payment_retry_submitted_at ?? null,
     created_at: data.created_at,
+    customer_id: data.customer_id ?? null,
     customer_name: data.customers?.name ?? null,
     customer_phone: data.customers?.phone ?? null,
     customer_address: data.customers?.address ?? null,
@@ -145,22 +179,63 @@ export async function fetchAdminOrderDetail(
   const supabase = createServiceClient();
 
   let includePaymentMethod = true;
+  let includePaymentScreenshot = true;
+  let includePaymentRejection = true;
+
   let result = await supabase
     .from("orders")
-    .select(buildOrderDetailSelect(includePaymentMethod))
+    .select(
+      buildOrderDetailSelect({
+        includePaymentMethod,
+        includePaymentScreenshot,
+        includePaymentRejection,
+      }),
+    )
     .eq("id", orderId)
     .maybeSingle();
 
-  if (result.error && isMissingColumnError(result.error, "payment_method")) {
-    if (process.env.NODE_ENV === "development") {
-      console.warn(
-        "[ADMIN ORDER DETAIL] payment_method column missing — using legacy fallback. Run supabase/migrations/20250623110000_payment_method.sql",
-      );
+  while (result.error) {
+    if (
+      isMissingColumnError(result.error, "payment_method") &&
+      includePaymentMethod
+    ) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn(
+          "[ADMIN ORDER DETAIL] payment_method column missing — using legacy fallback. Run supabase/migrations/20250623110000_payment_method.sql",
+        );
+      }
+      includePaymentMethod = false;
+    } else if (
+      (isMissingColumnError(result.error, "payment_screenshot_path") ||
+        isMissingColumnError(result.error, "payment_screenshot_uploaded_at")) &&
+      includePaymentScreenshot
+    ) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn(
+          "[ADMIN ORDER DETAIL] payment screenshot columns missing — using legacy fallback. Run supabase/migrations/20250623140000_ai_ops_payment_screenshots.sql",
+        );
+      }
+      includePaymentScreenshot = false;
+    } else if (
+      (isMissingColumnError(result.error, "payment_rejection_reason") ||
+        isMissingColumnError(result.error, "payment_rejected_at") ||
+        isMissingColumnError(result.error, "payment_retry_submitted_at")) &&
+      includePaymentRejection
+    ) {
+      includePaymentRejection = false;
+    } else {
+      break;
     }
-    includePaymentMethod = false;
+
     result = await supabase
       .from("orders")
-      .select(buildOrderDetailSelect(includePaymentMethod))
+      .select(
+        buildOrderDetailSelect({
+          includePaymentMethod,
+          includePaymentScreenshot,
+          includePaymentRejection,
+        }),
+      )
       .eq("id", orderId)
       .maybeSingle();
   }
@@ -187,6 +262,7 @@ type OrderStateRow = {
   payment_utr: string | null;
   payment_status: PaymentStatus;
   shipment_status: ShipmentStatus;
+  total_amount: number;
   notes?: string | null;
 };
 
@@ -196,14 +272,14 @@ async function fetchOrderStateRow(
 ): Promise<{ data: OrderStateRow | null; error: Error | null }> {
   let result = await supabase
     .from("orders")
-    .select("payment_method, payment_utr, payment_status, shipment_status, notes")
+    .select("payment_method, payment_utr, payment_status, shipment_status, total_amount, notes")
     .eq("id", orderId)
     .maybeSingle();
 
   if (result.error && isMissingColumnError(result.error, "payment_method")) {
     result = await supabase
       .from("orders")
-      .select("payment_utr, payment_status, shipment_status, notes")
+      .select("payment_utr, payment_status, shipment_status, total_amount, notes")
       .eq("id", orderId)
       .maybeSingle();
   }
@@ -243,6 +319,21 @@ export async function updateAdminOrder(
     notes: current.notes,
   });
 
+  validateAdminOrderDetailUpdate(
+    {
+      payment_method: resolvedPaymentMethod,
+      payment_status: current.payment_status,
+    },
+    {
+      status: fields.status,
+      shipment_status: fields.shipment_status,
+      payment_status: fields.payment_status,
+      delivery_courier: fields.delivery_courier,
+      tracking_id: fields.tracking_id,
+      notes: fields.notes,
+    },
+  );
+
   validateOrderFieldsUpdate(
     {
       payment_method: resolvedPaymentMethod,
@@ -275,9 +366,20 @@ export async function updateAdminOrder(
     ) {
       const { payment_method: _removed, ...rest } = updateFields;
       await executeOrderUpdate(supabase, orderId, rest);
-      return;
+    } else {
+      throw error;
     }
-    throw error;
+  }
+
+  if (
+    fields.payment_status === "failed" &&
+    current.payment_status !== "failed" &&
+    isCodOrder(resolvedPaymentMethod)
+  ) {
+    await notifyCustomerOfCodCollectionFailure({
+      orderId,
+      totalAmount: Number(current.total_amount),
+    });
   }
 }
 

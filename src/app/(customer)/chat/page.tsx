@@ -19,7 +19,6 @@ import {
   isValidUuid,
   saveCustomerSession,
   saveVaartaProfile,
-  clearCustomerSession,
   type CustomerSession,
 } from "@/lib/chat/customer-storage";
 import {
@@ -28,7 +27,15 @@ import {
   clearChatStateCache,
 } from "@/lib/chat/chat-state-cache";
 import { useCart } from "@/hooks/use-cart";
-import { RecommendationProductCards, TextMatchedProductCards } from "@/components/chat/recommendation-product-cards";
+import { RecommendationProductCards } from "@/components/chat/recommendation-product-cards";
+import { ChatStatusEventCard } from "@/components/chat/chat-status-event-card";
+import { ReturnOrderMessageCard } from "@/components/returns/return-order-message-card";
+import { isReturnOrderCardIntent } from "@/lib/chat/return-order-card";
+import {
+  isChatStatusEventIntent,
+  isPaymentStatusMessageIntent,
+} from "@/lib/chat/status-event-card";
+import { shouldShowProductCards } from "@/lib/ai/intent-categories";
 import { CartActionBubble } from "@/components/chat/cart-action-bubble";
 import { QuickReplyChips } from "@/components/chat/quick-reply-chips";
 import { CartQuickActions } from "@/components/chat/cart-quick-actions";
@@ -47,17 +54,41 @@ import {
   ensureOrderSuccessChatMessage,
   parseChatOrderSuccessParams,
 } from "@/lib/chat/order-success";
+import {
+  ensurePaymentRetryChatMessage,
+  ensurePaymentSubmittedChatMessage,
+  parseChatPaymentRetryParams,
+  parseChatPaymentSubmittedParams,
+} from "@/lib/orders/payment-retry-flow";
+import { fetchJson, isNetworkFetchError } from "@/lib/fetch-json";
 import { useInStockProducts } from "@/hooks/use-in-stock-products";
+import {
+  dedupeMessages,
+  getQuickActionKey,
+  shouldSkipDuplicateQuickAction,
+} from "@/lib/chat/quick-action-dedup";
+import { CHAT_RESPONSE_FALLBACK_MESSAGE } from "@/lib/chat/chat-errors";
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import type { Message } from "@/lib/types";
 import {
   diagnoseSupabaseError,
+  isMissingColumnError,
   isStaleChatSessionError,
   serializeErrorForLog,
 } from "@/lib/supabase/errors";
+import { CustomerOnboardingSheet } from "@/components/customer/customer-onboarding-sheet";
+import {
+  saveDpdpConsent,
+  syncDpdpConsentFromServer,
+  clearDpdpConsent,
+} from "@/lib/dpdp/consent-storage";
+import {
+  resetLocalCustomerJourney,
+  resetLocalCustomerJourneyAfterDeletion,
+} from "@/lib/dpdp/reset-local-journey";
 import { cn } from "@/lib/utils";
-
 import { STORE_INITIALS, STORE_NAME } from "@/lib/brand";
+
 const TYPING_MESSAGE_ID = "__typing__";
 
 const SAMPLE_PROMPTS = [
@@ -111,18 +142,28 @@ function MessageBubble({
   const time = formatTime(message.created_at);
 
   if (message.sender_type === "system") {
+    const useStatusCardLayout =
+      isChatStatusEventIntent(message.intent) ||
+      isPaymentStatusMessageIntent(message.intent);
+
     return (
-      <div className="chat-row-incoming justify-center px-1">
-        <div className="flex w-full max-w-[85%] flex-col items-center">
-          <div className="rounded-lg bg-[#fff9c4]/90 px-2.5 py-1 text-center text-[11px] leading-snug text-gray-600 shadow-sm">
-            <p className="whitespace-pre-wrap">{message.content}</p>
-          </div>
+      <div className="chat-row-incoming px-1">
+        <div className="flex w-full max-w-full min-w-0 flex-col items-stretch">
+          <ChatStatusEventCard
+            intent={message.intent}
+            content={message.content}
+            createdAt={message.created_at}
+          />
           {message.intent ? (
             <QuickReplyChips
               intent={message.intent}
+              content={message.content}
               disabled={disabled}
               onSelect={onQuickReply}
               onNavigate={onNavigate}
+              className={
+                useStatusCardLayout ? "mt-1 w-full justify-start" : undefined
+              }
             />
           ) : null}
         </div>
@@ -138,9 +179,9 @@ function MessageBubble({
 
     return (
       <div className="chat-row-outgoing">
-        <div className="chat-bubble-max w-fit">
-          <div className="rounded-[18px_18px_4px_18px] bg-[#dcf8c6] px-2.5 py-1.5 text-gray-900 shadow-sm">
-            <p className="whitespace-pre-wrap text-[14px] leading-snug">
+        <div className="chat-bubble-max min-w-0 max-w-full w-fit">
+          <div className="overflow-hidden rounded-[18px_18px_4px_18px] bg-[#dcf8c6] px-2.5 py-1.5 text-gray-900 shadow-sm">
+            <p className="chat-bubble-content whitespace-pre-wrap text-[14px] leading-snug">
               {displayContent}
             </p>
             <div className="mt-0.5 flex items-center justify-end gap-0.5">
@@ -155,6 +196,7 @@ function MessageBubble({
 
   const isAi = message.was_ai_drafted;
   const recommendedProductIds = parseRecommendationProductIds(message.intent);
+  const isReturnOrderCard = isReturnOrderCardIntent(message.intent);
 
   if (message.intent && isCartActionIntent(message.intent)) {
     return (
@@ -180,18 +222,26 @@ function MessageBubble({
         {isAi && (
           <p className="mb-0.5 text-[10px] text-[#128c7e]">🤖 AI Assistant</p>
         )}
-        <div className="chat-bubble-max w-fit">
-          <div className="rounded-[18px_18px_18px_4px] bg-white px-2.5 py-1.5 text-gray-900 shadow-sm">
-            <p className="whitespace-pre-wrap text-[14px] leading-snug">
-              {displayContent}
-            </p>
-            <div className="mt-0.5 flex justify-end">
-              <span className="text-[10px] text-gray-400">{time}</span>
+        <div className="chat-bubble-max min-w-0 max-w-full w-fit overflow-hidden">
+          {isReturnOrderCard ? (
+            <ReturnOrderMessageCard
+              intent={message.intent}
+              content={message.content}
+              createdAt={message.created_at}
+            />
+          ) : (
+            <div className="rounded-[18px_18px_18px_4px] bg-white px-2.5 py-1.5 text-gray-900 shadow-sm">
+              <p className="chat-bubble-content whitespace-pre-wrap text-[14px] leading-snug">
+                {displayContent}
+              </p>
+              <div className="mt-0.5 flex justify-end">
+                <span className="text-[10px] text-gray-400">{time}</span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
-        {recommendedProductIds.length > 0 && (
+        {shouldShowProductCards(message.intent) && recommendedProductIds.length > 0 && (
           <div className="chat-attachment-max w-full">
             <RecommendationProductCards
               productIds={recommendedProductIds}
@@ -201,22 +251,16 @@ function MessageBubble({
           </div>
         )}
 
-        {(message.sender_type === "admin" || isAi) &&
-          recommendedProductIds.length === 0 && (
-          <div className="chat-attachment-max w-full">
-            <TextMatchedProductCards
-              messageText={message.content}
-              excludeProductIds={recommendedProductIds}
-              disabled={disabled}
-              onNavigate={onNavigate}
-            />
-          </div>
-        )}
-
         {message.intent && message.intent !== "welcome_samples" && (
-          <div className="chat-attachment-max w-fit">
+          <div
+            className={cn(
+              "chat-attachment-max w-fit",
+              isReturnOrderCard && "max-w-md w-full",
+            )}
+          >
             <QuickReplyChips
               intent={message.intent}
+              content={message.content}
               disabled={disabled}
               onSelect={onQuickReply}
               onNavigate={onNavigate}
@@ -244,91 +288,6 @@ function MessageBubble({
         )}
       </div>
     </div>
-  );
-}
-
-function WelcomeSheet({
-  open,
-  onConnect,
-  loading,
-  error,
-}: {
-  open: boolean;
-  onConnect: (name: string) => Promise<void>;
-  loading: boolean;
-  error: string | null;
-}) {
-  const [name, setName] = useState("");
-
-  if (!open) return null;
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = name.trim();
-    console.log("[chat/welcome] form submit", { name: trimmed, loading });
-    if (!trimmed) {
-      console.warn("[chat/welcome] submit blocked — empty name");
-      return;
-    }
-    console.log("[chat/welcome] calling onConnect → handleConnect");
-    await onConnect(trimmed);
-    console.log("[chat/welcome] onConnect finished");
-  }
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/40" aria-hidden />
-      <div
-        role="dialog"
-        aria-labelledby="welcome-title"
-        className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-white px-6 pb-8 pt-6 shadow-2xl safe-bottom"
-      >
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-gray-300" />
-        <h2
-          id="welcome-title"
-          className="text-lg font-semibold text-gray-900"
-        >
-          Welcome to {STORE_NAME}
-        </h2>
-        <p className="mt-1 text-sm text-gray-500">Just your name to get started</p>
-
-        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
-          <div>
-            <label
-              htmlFor="name"
-              className="mb-1 block text-xs font-medium text-gray-600"
-            >
-              Your Name
-            </label>
-            <input
-              id="name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Rachel Fernandes"
-              required
-              autoFocus
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-[var(--whatsapp-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--whatsapp-primary)]"
-            />
-          </div>
-          {error ? (
-            <div
-              role="alert"
-              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-            >
-              {error}
-            </div>
-          ) : null}
-          <button
-            type="submit"
-            disabled={loading || !name.trim()}
-            className="w-full rounded-lg bg-[var(--whatsapp-primary)] py-3 text-sm font-semibold text-white transition-colors hover:bg-[var(--whatsapp-primary-hover)] disabled:opacity-60"
-          >
-            {loading ? "Starting…" : "Start Chatting →"}
-          </button>
-        </form>
-      </div>
-    </>
   );
 }
 
@@ -367,6 +326,8 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<Message[]>([]);
+  const inFlightActionsRef = useRef<Set<string>>(new Set());
+  const processingRequestsRef = useRef<Set<string>>(new Set());
   const sessionRef = useRef<Partial<CustomerSession>>({});
   const lastCartMutationAtRef = useRef<number | null>(null);
   const userScrolledUpRef = useRef(false);
@@ -439,9 +400,11 @@ export default function ChatPage() {
     if (messageIdsRef.current.has(message.id)) return;
     messageIdsRef.current.add(message.id);
     setMessages((prev) =>
-      [...prev, message].sort(
-        (a, b) =>
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      dedupeMessages(
+        [...prev, message].sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        ),
       ),
     );
   }, []);
@@ -526,7 +489,10 @@ export default function ChatPage() {
   );
 
   const syncMessages = useCallback(
-    async (conversationId: string, existingMessages: Message[]) => {
+    async (
+      conversationId: string,
+      existingMessages: Message[],
+    ): Promise<{ adminRepliesAdded: number }> => {
       const persistable = existingMessages.filter(
         (message) => message.id !== TYPING_MESSAGE_ID,
       );
@@ -544,17 +510,24 @@ export default function ChatPage() {
         .order("created_at", { ascending: true });
 
       if (error) {
-        console.error("[chat/messages] failed to sync messages", error);
-        return;
+        console.error("[CHAT] sync messages failed:", error);
+        return { adminRepliesAdded: 0 };
       }
 
-      if (!data?.length) return;
+      if (!data?.length) {
+        return { adminRepliesAdded: 0 };
+      }
 
       const merged = [...persistable];
+      let adminRepliesAdded = 0;
+
       for (const row of data) {
         if (!messageIdsRef.current.has(row.id)) {
           messageIdsRef.current.add(row.id);
           merged.push(row);
+          if (row.sender_type === "admin") {
+            adminRepliesAdded += 1;
+          }
         }
       }
 
@@ -564,6 +537,14 @@ export default function ChatPage() {
       );
       shouldInstantScrollRef.current = true;
       setMessages(merged);
+
+      if (adminRepliesAdded > 0) {
+        console.log("[CHAT] bot messages synced from database", {
+          adminRepliesAdded,
+        });
+      }
+
+      return { adminRepliesAdded };
     },
     [getSupabase],
   );
@@ -621,40 +602,6 @@ export default function ChatPage() {
   );
 
   useLayoutEffect(() => {
-    const stored = getCustomerSession();
-    if (
-      !stored.customerId ||
-      !stored.conversationId ||
-      !isValidUuid(stored.customerId) ||
-      !isValidUuid(stored.conversationId)
-    ) {
-      return;
-    }
-
-    const cached = getChatStateCache(stored.conversationId);
-    if (!cached?.messages.length) return;
-
-    const filtered = cached.messages.filter(
-      (message) => message.id !== TYPING_MESSAGE_ID,
-    );
-    if (filtered.length === 0) return;
-
-    messageIdsRef.current = new Set(filtered.map((message) => message.id));
-    setMessages(filtered);
-    setSession({
-      customerId: stored.customerId,
-      conversationId: stored.conversationId,
-      customerName: stored.customerName ?? "",
-      phone: stored.phone ?? "",
-    });
-    setShowWelcome(false);
-    setIsLoading(false);
-    setLoadingMessages(false);
-    restoredFromCacheRef.current = true;
-    shouldInstantScrollRef.current = true;
-  }, []);
-
-  useLayoutEffect(() => {
     if (!shouldInstantScrollRef.current) return;
     if (isLoading || loadingMessages || messages.length === 0) return;
 
@@ -668,72 +615,138 @@ export default function ChatPage() {
     async function init() {
       const stored = getCustomerSession();
 
-      if (stored.customerId) {
-        if (!isValidUuid(stored.customerId)) {
-          clearCustomerSession();
-          setShowWelcome(true);
-          setIsLoading(false);
-          return;
-        }
+      if (!stored.customerId) {
+        setShowWelcome(true);
+        setIsLoading(false);
+        return;
+      }
 
-        try {
-          const conversationId = await resolveOrCreateConversation(
-            stored.customerId,
-          );
+      if (!isValidUuid(stored.customerId)) {
+        resetLocalCustomerJourney();
+        setShowWelcome(true);
+        setIsLoading(false);
+        return;
+      }
 
-          if (!conversationId) {
-            if (process.env.NODE_ENV === "development") {
-              console.warn(
-                "[chat/init] stale session — customer not in database, clearing",
-              );
-            }
-            clearCustomerSession();
+      try {
+        const profileResponse = await fetch(
+          `/api/customer/profile?customerId=${encodeURIComponent(stored.customerId)}`,
+        );
+
+        if (!profileResponse.ok) {
+          if (profileResponse.status === 404) {
+            resetLocalCustomerJourney();
             setShowWelcome(true);
             setIsLoading(false);
             return;
           }
 
-          const nextSession: CustomerSession = {
-            customerId: stored.customerId,
-            conversationId,
-            customerName: stored.customerName ?? "",
-            phone: stored.phone ?? "",
-          };
-
-          saveCustomerSession(nextSession);
-          setSession(nextSession);
-          setShowWelcome(false);
-
-          if (
-            restoredFromCacheRef.current &&
-            stored.conversationId === conversationId
-          ) {
-            await syncMessages(conversationId, messagesRef.current);
-          } else {
-            if (stored.conversationId) {
-              clearChatStateCache(stored.conversationId);
-            }
-            await loadMessages(conversationId, stored.customerName);
-            shouldInstantScrollRef.current = true;
-          }
-        } catch (error) {
-          const logPayload = {
-            ...serializeErrorForLog(error),
-            summary: diagnoseSupabaseError(error),
-          };
-
-          if (isStaleChatSessionError(error)) {
-            if (process.env.NODE_ENV === "development") {
-              console.warn("[chat/init] stale session cleared", logPayload);
-            }
-          } else {
-            console.error("[chat/init] session restore failed", logPayload);
-          }
-
-          clearCustomerSession();
-          setShowWelcome(true);
+          const body = (await profileResponse.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(body?.error ?? "Failed to load customer profile");
         }
-      } else {
+
+        const profile = (await profileResponse.json()) as {
+          dpdpConsent?: boolean;
+          dpdpConsentAt?: string | null;
+          deletionStatus?: string;
+        };
+
+        if (profile.deletionStatus === "deleted") {
+          resetLocalCustomerJourneyAfterDeletion();
+          clearCart();
+          messageIdsRef.current.clear();
+          setMessages([]);
+          setSession({});
+          restoredFromCacheRef.current = false;
+          setShowWelcome(true);
+          setIsLoading(false);
+          return;
+        }
+
+        if (!profile.dpdpConsent) {
+          clearDpdpConsent();
+          resetLocalCustomerJourney();
+          clearCart();
+          messageIdsRef.current.clear();
+          setMessages([]);
+          setSession({});
+          restoredFromCacheRef.current = false;
+          setShowWelcome(true);
+          setIsLoading(false);
+          return;
+        }
+
+        syncDpdpConsentFromServer(true, profile.dpdpConsentAt ?? null);
+
+        const conversationId = await resolveOrCreateConversation(
+          stored.customerId,
+        );
+
+        if (!conversationId) {
+          if (process.env.NODE_ENV === "development") {
+            console.warn(
+              "[chat/init] stale session — customer not in database, clearing",
+            );
+          }
+          resetLocalCustomerJourney();
+          setShowWelcome(true);
+          setIsLoading(false);
+          return;
+        }
+
+        const nextSession: CustomerSession = {
+          customerId: stored.customerId,
+          conversationId,
+          customerName: stored.customerName ?? "",
+          phone: stored.phone ?? "",
+        };
+
+        saveCustomerSession(nextSession);
+        setSession(nextSession);
+        setShowWelcome(false);
+
+        const cached =
+          stored.conversationId === conversationId
+            ? getChatStateCache(conversationId)
+            : null;
+
+        if (cached?.messages.length) {
+          const filtered = cached.messages.filter(
+            (message) => message.id !== TYPING_MESSAGE_ID,
+          );
+          messageIdsRef.current = new Set(filtered.map((message) => message.id));
+          setMessages(filtered);
+          restoredFromCacheRef.current = true;
+          shouldInstantScrollRef.current = true;
+          await syncMessages(conversationId, filtered);
+        } else {
+          if (stored.conversationId) {
+            clearChatStateCache(stored.conversationId);
+          }
+          await loadMessages(conversationId, stored.customerName);
+          shouldInstantScrollRef.current = true;
+        }
+      } catch (error) {
+        const logPayload = {
+          ...serializeErrorForLog(error),
+          summary: diagnoseSupabaseError(error),
+        };
+
+        if (isStaleChatSessionError(error)) {
+          if (process.env.NODE_ENV === "development") {
+            console.warn("[chat/init] stale session cleared", logPayload);
+          }
+        } else {
+          console.error("[chat/init] session restore failed", logPayload);
+        }
+
+        resetLocalCustomerJourney();
+        messageIdsRef.current.clear();
+        setMessages([]);
+        setSession({});
+        restoredFromCacheRef.current = false;
         setShowWelcome(true);
       }
 
@@ -756,6 +769,59 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (isLoading || !session.conversationId || showWelcome) return;
+
+    const submittedParams = parseChatPaymentSubmittedParams(window.location.search);
+    if (submittedParams) {
+      let cancelled = false;
+
+      void (async () => {
+        try {
+          const message = await ensurePaymentSubmittedChatMessage(getSupabase(), {
+            conversationId: session.conversationId!,
+            orderId: submittedParams.orderId,
+            totalAmount: submittedParams.totalAmount,
+          });
+
+          if (cancelled || !message) return;
+
+          addMessage(message);
+          router.replace("/chat", { scroll: false });
+        } catch (error) {
+          console.error("[chat/payment-submitted] failed to insert confirmation", error);
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const retryParams = parseChatPaymentRetryParams(window.location.search);
+    if (retryParams) {
+      let cancelled = false;
+
+      void (async () => {
+        try {
+          const message = await ensurePaymentRetryChatMessage(getSupabase(), {
+            conversationId: session.conversationId!,
+            orderId: retryParams.orderId,
+            totalAmount: retryParams.totalAmount,
+            paymentMethod: retryParams.paymentMethod,
+          });
+
+          if (cancelled || !message) return;
+
+          addMessage(message);
+          router.replace("/chat", { scroll: false });
+        } catch (error) {
+          console.error("[chat/payment-retry] failed to insert confirmation", error);
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const params = parseChatOrderSuccessParams(window.location.search);
     if (!params) return;
@@ -805,7 +871,13 @@ export default function ChatPage() {
           filter: `conversation_id=eq.${session.conversationId}`,
         },
         (payload) => {
-          addMessage(payload.new as Message);
+          const message = payload.new as Message;
+          console.log("[CHAT] realtime message received", {
+            id: message.id,
+            sender: message.sender_type,
+            intent: message.intent,
+          });
+          addMessage(message);
         },
       )
       .subscribe();
@@ -907,29 +979,62 @@ export default function ChatPage() {
     try {
       const phone = generatePhone();
       console.log("[chat/connect] generated phone", { phone });
+      const consentAt = new Date().toISOString();
 
       saveVaartaProfile({ name, phone });
       console.log("[chat/connect] saved vaarta profile to localStorage");
 
       console.log("[chat/connect] inserting customer…");
-      const { data: customer, error: customerError } = await getSupabase()
+      const customerPayload = {
+        business_id: BUSINESS_ID,
+        phone,
+        name,
+        consent_given: true,
+        dpdp_consent: true,
+        dpdp_consent_at: consentAt,
+      };
+
+      let customerResult = await getSupabase()
         .from("customers")
-        .insert({
-          business_id: BUSINESS_ID,
-          phone,
-          name,
-          consent_given: true,
-        })
+        .insert(customerPayload)
         .select("id")
         .single();
+
+      if (
+        customerResult.error &&
+        isMissingColumnError(customerResult.error, "dpdp_consent")
+      ) {
+        customerResult = await getSupabase()
+          .from("customers")
+          .insert({
+            business_id: BUSINESS_ID,
+            phone,
+            name,
+            consent_given: true,
+          })
+          .select("id")
+          .single();
+      }
+
+      const { data: customer, error: customerError } = customerResult;
 
       if (customerError) {
         console.error("[chat/connect] customer insert failed", customerError);
         throw customerError;
       }
 
+      saveDpdpConsent(consentAt);
+
       console.log("[chat/connect] customer created", { customerId: customer.id });
       saveVaartaProfile({ customerId: customer.id });
+
+      void fetch("/api/customer/consent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId: customer.id }),
+      }).catch((consentError) => {
+        console.error("[chat/connect] consent audit failed", consentError);
+      });
 
       console.log("[chat/connect] inserting conversation…");
       const { data: conversation, error: conversationError } = await getSupabase()
@@ -1007,10 +1112,28 @@ export default function ChatPage() {
   }, []);
 
   const processAiResponse = useCallback(
-    async (conversationId: string, customerId: string, text: string) => {
+    async (
+      conversationId: string,
+      customerId: string,
+      text: string,
+      actionKey?: string | null,
+    ) => {
+      const requestKey = `${conversationId}:${text}`;
+      if (processingRequestsRef.current.has(requestKey)) {
+        console.warn("[CHAT] AI request already in flight", { requestKey });
+        return;
+      }
+
+      processingRequestsRef.current.add(requestKey);
       setIsTyping(true);
       setAiError(null);
       addTypingPlaceholder(conversationId);
+
+      console.log("[CHAT] AI request started", {
+        conversationId,
+        message: text,
+        actionKey: actionKey ?? null,
+      });
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 60_000);
@@ -1023,26 +1146,11 @@ export default function ChatPage() {
           unitPrice: item.product.price,
         }));
 
-        const response = await fetch("/api/ai/process", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            conversationId,
-            customerId,
-            message: text,
-            localCartItems,
-          }),
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          const payload = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(payload?.error ?? `AI process failed (${response.status})`);
-        }
-
-        const data = (await response.json()) as {
+        const data = await fetchJson<{
+          duplicateSkipped?: boolean;
+          assistantReplySent?: boolean;
+          recommendationSent?: boolean;
+          route?: string;
           cart?: {
             success?: boolean;
             items?: {
@@ -1059,7 +1167,43 @@ export default function ChatPage() {
             price: number;
           }[] | null;
           orderPlaced?: boolean;
-        };
+        }>("/api/ai/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId,
+            customerId,
+            message: text,
+            localCartItems,
+          }),
+          signal: controller.signal,
+          retries: 1,
+        });
+
+        console.log("[CHAT] AI response received", {
+          route: data.route,
+          duplicateSkipped: data.duplicateSkipped ?? false,
+          assistantReplySent: data.assistantReplySent ?? false,
+          recommendationSent: data.recommendationSent ?? false,
+        });
+
+        if (data.duplicateSkipped) {
+          console.log("[CHAT] duplicate quick action skipped by server");
+          return;
+        }
+
+        const syncResult = await syncMessages(conversationId, messagesRef.current);
+
+        if (
+          data.assistantReplySent === false &&
+          syncResult.adminRepliesAdded === 0
+        ) {
+          console.warn("[CHAT] API completed without bot reply", {
+            route: data.route,
+            message: text,
+          });
+          setAiError(CHAT_RESPONSE_FALLBACK_MESSAGE);
+        }
 
         const cartItems =
           data.cartSync != null
@@ -1089,21 +1233,22 @@ export default function ChatPage() {
         }
       } catch (error) {
         const isAbort = error instanceof DOMException && error.name === "AbortError";
-        const isNetworkError =
-          error instanceof TypeError && error.message === "Failed to fetch";
+        const isNetworkError = isNetworkFetchError(error);
 
         const message = isAbort
           ? "The assistant took too long to respond. Please try again."
           : isNetworkError
             ? "Could not reach the server. Check that `npm run dev` is running and refresh the page."
-            : error instanceof Error
-              ? error.message
-              : "Something went wrong while processing your message.";
+            : CHAT_RESPONSE_FALLBACK_MESSAGE;
 
-        console.error("[ERROR] AI response failed:", error);
+        console.error("[CHAT] AI response failed:", error);
         setAiError(message);
       } finally {
         clearTimeout(timeout);
+        processingRequestsRef.current.delete(requestKey);
+        if (actionKey) {
+          inFlightActionsRef.current.delete(actionKey);
+        }
         removeTypingPlaceholder();
         setIsTyping(false);
       }
@@ -1114,6 +1259,7 @@ export default function ChatPage() {
       applyCartUpdates,
       clearCart,
       snapshot.items,
+      syncMessages,
     ],
   );
 
@@ -1121,42 +1267,102 @@ export default function ChatPage() {
     async (text: string) => {
       const trimmed = text.trim();
       const current = sessionRef.current;
+
+      console.log("[CHAT] message submission", {
+        text: trimmed,
+        conversationId: current.conversationId ?? null,
+        customerId: current.customerId ?? null,
+        isTyping,
+      });
+
       if (
         !trimmed ||
         !current.conversationId ||
         !current.customerId ||
         isTyping
       ) {
+        console.warn("[CHAT] send skipped", {
+          reason: !trimmed
+            ? "empty"
+            : !current.conversationId || !current.customerId
+              ? "no_session"
+              : "is_typing",
+        });
         return;
       }
 
-      const { data: inserted, error } = await getSupabase()
-        .from("messages")
-        .insert({
-          conversation_id: current.conversationId,
-          sender_type: "customer",
-          content: trimmed,
-        })
-        .select("*")
-        .single();
+      const actionKey = getQuickActionKey(trimmed);
+      const requestKey = `${current.conversationId}:${trimmed}`;
 
-      if (error) {
-        console.error("[ERROR] Send failed:", error);
+      if (actionKey) {
+        if (inFlightActionsRef.current.has(actionKey)) {
+          console.warn("[CHAT] quick action in flight", { actionKey });
+          return;
+        }
+        if (shouldSkipDuplicateQuickAction(actionKey, messagesRef.current)) {
+          console.log("[CHAT] duplicate quick action ignored", { actionKey });
+          return;
+        }
+      }
+
+      if (processingRequestsRef.current.has(requestKey)) {
+        console.warn("[CHAT] duplicate send ignored", { requestKey });
         return;
       }
 
-      addMessage(inserted);
+      if (actionKey) {
+        inFlightActionsRef.current.add(actionKey);
+      }
 
-      await getSupabase()
-        .from("conversations")
-        .update({ last_message_at: new Date().toISOString() })
-        .eq("id", current.conversationId);
+      try {
+        const { data: inserted, error } = await getSupabase()
+          .from("messages")
+          .insert({
+            conversation_id: current.conversationId,
+            sender_type: "customer",
+            content: trimmed,
+          })
+          .select("*")
+          .single();
 
-      void processAiResponse(
-        current.conversationId,
-        current.customerId,
-        trimmed,
-      );
+        if (error) {
+          console.error("[CHAT] customer message insert failed:", error);
+          if (actionKey) {
+            inFlightActionsRef.current.delete(actionKey);
+          }
+          setAiError("Could not send your message. Please check your connection and try again.");
+          return;
+        }
+
+        console.log("[CHAT] customer message inserted", { id: inserted.id });
+        addMessage(inserted);
+
+        const { error: conversationError } = await getSupabase()
+          .from("conversations")
+          .update({ last_message_at: new Date().toISOString() })
+          .eq("id", current.conversationId);
+
+        if (conversationError) {
+          console.error("[ERROR] Conversation update failed:", conversationError);
+        }
+
+        void processAiResponse(
+          current.conversationId,
+          current.customerId,
+          trimmed,
+          actionKey,
+        );
+      } catch (error) {
+        console.error("[CHAT] send message failed:", error);
+        if (actionKey) {
+          inFlightActionsRef.current.delete(actionKey);
+        }
+        setAiError(
+          isNetworkFetchError(error)
+            ? "Could not reach the server. Check that `npm run dev` is running and refresh the page."
+            : "Could not send your message. Please try again.",
+        );
+      }
     },
     [getSupabase, addMessage, processAiResponse, isTyping],
   );
@@ -1177,7 +1383,7 @@ export default function ChatPage() {
 
   const handleQuickReply = useCallback(
     (text: string) => {
-      if (showWelcome) return;
+      if (showWelcome || isTyping) return;
 
       const undo = parseCartUndoMessage(text);
       if (undo) {
@@ -1208,10 +1414,17 @@ export default function ChatPage() {
         return;
       }
 
+      const actionKey = getQuickActionKey(text);
+      if (actionKey) {
+        if (inFlightActionsRef.current.has(actionKey)) return;
+        if (shouldSkipDuplicateQuickAction(actionKey, messagesRef.current)) return;
+      }
+
       void sendMessage(text);
     },
     [
       showWelcome,
+      isTyping,
       sendMessage,
       snapshot.items,
       applyCartUpdates,
@@ -1265,7 +1478,7 @@ export default function ChatPage() {
   );
 
   return (
-    <div className="chat-shell flex w-full flex-col bg-[var(--whatsapp-bg)]">
+    <div className="chat-shell flex w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-[var(--whatsapp-bg)]">
       {/* Header */}
       <header className="flex h-[52px] w-full shrink-0 items-center gap-2.5 bg-[#075e54] px-3 shadow-md md:px-4 lg:px-6 safe-top">
         <Link
@@ -1287,7 +1500,13 @@ export default function ChatPage() {
           <p className="text-[12px] leading-tight text-white/70">Online</p>
         </div>
 
-        <div className="flex items-center">
+        <div className="flex items-center gap-1">
+          <Link
+            href="/my-data"
+            className="hidden min-[400px]:inline-flex rounded-full px-2 py-1 text-[11px] font-medium text-white/80 transition-colors hover:bg-white/10"
+          >
+            My Data
+          </Link>
           <button
             type="button"
             className="rounded-full p-2 text-white/90 transition-colors hover:bg-white/10"
@@ -1375,7 +1594,7 @@ export default function ChatPage() {
         {/* Input bar */}
         <form
           onSubmit={handleSubmit}
-          className="flex w-full shrink-0 items-end gap-1.5 border-t border-black/5 bg-[#f0f0f0] px-2 py-1.5 md:px-4 lg:px-6 safe-bottom"
+          className="flex w-full min-w-0 shrink-0 items-end gap-1.5 border-t border-black/5 bg-[#f0f0f0] px-2 py-1.5 md:px-4 lg:px-6 safe-bottom"
         >
           <button
             type="button"
@@ -1398,7 +1617,7 @@ export default function ChatPage() {
                   : "Message"
             }
             disabled={inputDisabled}
-            className="mb-0.5 flex-1 rounded-full border-none bg-white px-3.5 py-2 text-[15px] leading-tight shadow-sm focus:outline-none focus:ring-1 focus:ring-[#128c7e]/40 disabled:opacity-50"
+            className="mb-0.5 min-w-0 flex-1 rounded-full border-none bg-white px-3.5 py-2 text-[15px] leading-tight shadow-sm focus:outline-none focus:ring-1 focus:ring-[#128c7e]/40 disabled:opacity-50"
             autoComplete="off"
           />
 
@@ -1441,7 +1660,7 @@ export default function ChatPage() {
         </form>
       </div>
 
-      <WelcomeSheet
+      <CustomerOnboardingSheet
         open={!isLoading && showWelcome}
         onConnect={handleConnect}
         loading={connecting}

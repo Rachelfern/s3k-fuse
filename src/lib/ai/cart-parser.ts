@@ -2,7 +2,9 @@ import { normalizeQuery } from "@/lib/hinglish";
 import type { GroundedProduct } from "@/lib/ai/product-grounding";
 import {
   extractProductEntity,
+  extractProductSegments,
   normalizeWordQuantities,
+  type ExtractedProductEntity,
 } from "@/lib/ai/product-entity-extraction";
 import {
   findAmbiguousMatches,
@@ -275,11 +277,23 @@ function resolveQuantityAwareMatches(
   return matches;
 }
 
-export function parseCartIntent(
+function formatMultiConfirmationMessage(lines: ParsedCartLine[]): string {
+  const summary = lines
+    .map(
+      (line) =>
+        `${line.product.name_en} × ${line.quantity}`,
+    )
+    .join(", ");
+
+  return `I found ${summary}. Would you like me to add these to your cart?`;
+}
+
+function parseSingleCartSegment(
+  segment: ExtractedProductEntity,
   message: string,
   products: GroundedProduct[],
 ): ParseCartIntentResult {
-  const { productQuery, normalizedMessage } = extractProductEntity(message);
+  const { productQuery, normalizedMessage } = segment;
   const requested = extractRequestedQuantity(normalizedMessage);
   const queryTokens = tokenizeProductText(productQuery);
 
@@ -331,6 +345,63 @@ export function parseCartIntent(
   return {
     status: "ready",
     lines: [line],
+  };
+}
+
+export function parseCartIntent(
+  message: string,
+  products: GroundedProduct[],
+): ParseCartIntentResult {
+  const segments = extractProductSegments(message);
+
+  if (segments.length <= 1) {
+    const segment = segments[0] ?? extractProductEntity(message);
+    return parseSingleCartSegment(segment, message, products);
+  }
+
+  const allLines: ParsedCartLine[] = [];
+  let needsConfirm = false;
+
+  for (const segment of segments) {
+    const result = parseSingleCartSegment(segment, message, products);
+
+    if (result.status === "ambiguous") {
+      return result;
+    }
+
+    if (result.status === "no_match") {
+      return {
+        status: "no_match",
+        message: "I couldn't match those items to our catalog. Could you try again?",
+      };
+    }
+
+    if (result.status === "confirm" || result.status === "ready") {
+      allLines.push(...result.lines);
+      if (result.status === "confirm") {
+        needsConfirm = true;
+      }
+    }
+  }
+
+  if (allLines.length === 0) {
+    return {
+      status: "no_match",
+      message: "I couldn't match those items to our catalog. Could you try again?",
+    };
+  }
+
+  if (needsConfirm) {
+    return {
+      status: "confirm",
+      lines: allLines,
+      message: formatMultiConfirmationMessage(allLines),
+    };
+  }
+
+  return {
+    status: "ready",
+    lines: allLines,
   };
 }
 

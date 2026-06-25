@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  getQuickRepliesForIntent,
+  getQuickRepliesForMessage,
   resolveQuickReplyAction,
   type QuickReply,
 } from "@/lib/chat/quick-replies";
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 interface QuickReplyChipsProps {
   intent: string | null;
+  content?: string | null;
   disabled?: boolean;
   onSelect: (message: string) => void;
   onNavigate?: (href: string) => void;
@@ -30,12 +31,13 @@ function handleReplyClick(
 
 export function QuickReplyChips({
   intent,
+  content,
   disabled = false,
   onSelect,
   onNavigate,
   className,
 }: QuickReplyChipsProps) {
-  const replies = getQuickRepliesForIntent(intent);
+  const replies = getQuickRepliesForMessage({ intent, content });
 
   if (replies.length === 0) return null;
 

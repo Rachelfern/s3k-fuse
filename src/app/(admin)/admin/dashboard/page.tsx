@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle, Clock, ShoppingBag } from "lucide-react";
+import { CheckCircle, Clock, PackageX, ShoppingBag } from "lucide-react";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import type {
   DashboardMetrics,
   RecentOrderRow,
 } from "@/lib/admin/dashboard-metrics";
+import type { ReturnMetrics } from "@/lib/orders/return-management-service";
+import { ADMIN_RETURN_SECTIONS } from "@/lib/orders/return-status-timeline";
 import { AdminDateTimeCell } from "@/components/admin/admin-datetime-cell";
 import { AnimatedCounter } from "@/components/ui/animated-counter";
 import { Button } from "@/components/ui/button";
@@ -23,10 +25,12 @@ import {
   formatPaymentStatusLabel,
   formatShipmentStatusLabel,
   isAwaitingCodCollection,
+  isCodCollectionFailed,
   isInvalidOrderState,
   PAYMENT_STATUS_CHIP_STYLES,
   SHIPMENT_STATUS_SELECT_STYLES,
 } from "@/lib/admin/order-utils";
+import { isUpiAwaitingVerification } from "@/lib/orders/order-lifecycle";
 import { cn } from "@/lib/utils";
 
 type MetricKey =
@@ -158,6 +162,7 @@ function getFlashingCards(
 async function fetchDashboardFromApi(): Promise<{
   metrics: DashboardMetrics;
   recentOrders: RecentOrderRow[];
+  returnMetrics: ReturnMetrics | null;
 }> {
   const response = await fetch("/api/admin/dashboard", {
     cache: "no-store",
@@ -173,12 +178,14 @@ async function fetchDashboardFromApi(): Promise<{
   return response.json() as Promise<{
     metrics: DashboardMetrics;
     recentOrders: RecentOrderRow[];
+    returnMetrics: ReturnMetrics | null;
   }>;
 }
 
 export default function AdminDashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [recentOrders, setRecentOrders] = useState<RecentOrderRow[]>([]);
+  const [returnMetrics, setReturnMetrics] = useState<ReturnMetrics | null>(null);
   const [initialLoad, setInitialLoad] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
   const [flashingCards, setFlashingCards] = useState<Set<MetricKey>>(
@@ -218,7 +225,7 @@ export default function AdminDashboardPage() {
   const loadDashboard = useCallback(
     async (options?: { flashChanges?: boolean; silent?: boolean }) => {
       try {
-        const { metrics: nextMetrics, recentOrders: nextRecentOrders } =
+        const { metrics: nextMetrics, recentOrders: nextRecentOrders, returnMetrics: nextReturnMetrics } =
           await fetchDashboardFromApi();
 
         if (options?.flashChanges) {
@@ -228,6 +235,7 @@ export default function AdminDashboardPage() {
         metricsRef.current = nextMetrics;
         setMetrics(nextMetrics);
         setRecentOrders(nextRecentOrders);
+        setReturnMetrics(nextReturnMetrics);
         setDataError(null);
       } catch (loadError) {
         setDataError(
@@ -276,8 +284,8 @@ export default function AdminDashboardPage() {
   const isLive = realtimeStatus === "connected";
 
   return (
-    <div className="space-y-8 p-6">
-      <div className="flex items-start justify-between gap-4">
+    <div className="admin-page space-y-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
           <p className="mt-1 text-sm text-gray-500">
@@ -298,7 +306,7 @@ export default function AdminDashboardPage() {
         <RealtimeUnavailableBanner />
       ) : null}
 
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {initialLoad ? (
           <>
             <MetricCardSkeleton />
@@ -367,6 +375,42 @@ export default function AdminDashboardPage() {
         )}
       </section>
 
+      {returnMetrics ? (
+        <section className="space-y-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-base font-semibold text-gray-900">
+                Return Management
+              </h3>
+              <p className="text-sm text-gray-500">
+                Pending returns and workflow status across operations.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
+              <Link href="/admin/returns">Manage Returns</Link>
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {ADMIN_RETURN_SECTIONS.map((section) => (
+              <Link
+                key={section.key}
+                href={`/admin/returns?status=${section.key}`}
+                className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm transition-colors hover:border-green-200 hover:bg-green-50/30"
+              >
+                <div className="mb-2 rounded-lg bg-orange-50 p-2 text-orange-600 w-fit">
+                  <PackageX className="size-4" />
+                </div>
+                <p className="text-2xl font-bold text-gray-900">
+                  {returnMetrics[section.key]}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">{section.label}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
         <div className="border-b border-gray-100 px-5 py-4">
           <h3 className="text-base font-semibold text-gray-900">
@@ -411,6 +455,14 @@ export default function AdminDashboardPage() {
                     order.payment_status,
                     order.shipment_status,
                   );
+                  const codFailed = isCodCollectionFailed(
+                    order.payment_method,
+                    order.payment_status,
+                  );
+                  const upiVerificationPending = isUpiAwaitingVerification(
+                    order.payment_method,
+                    order.payment_status,
+                  );
 
                   return (
                   <tr
@@ -418,7 +470,9 @@ export default function AdminDashboardPage() {
                     className={cn(
                       "border-b border-gray-50 last:border-0",
                       inconsistent && "bg-red-50/60",
-                      awaitingCod && "bg-amber-50/50",
+                      codFailed && "bg-amber-100/70",
+                      awaitingCod && !codFailed && "bg-amber-50/50",
+                      upiVerificationPending && "bg-blue-50/50",
                     )}
                   >
                     <td className="px-5 py-4 font-medium text-gray-900">
@@ -443,9 +497,17 @@ export default function AdminDashboardPage() {
                           <span className="text-[10px] font-medium text-red-600">
                             Ahead of payment
                           </span>
+                        ) : codFailed ? (
+                          <span className="text-[10px] font-medium text-amber-800">
+                            COD not collected
+                          </span>
                         ) : awaitingCod ? (
                           <span className="text-[10px] font-medium text-amber-700">
                             Awaiting COD collection
+                          </span>
+                        ) : upiVerificationPending ? (
+                          <span className="text-[10px] font-medium text-blue-700">
+                            UPI verification pending
                           </span>
                         ) : null}
                       </div>

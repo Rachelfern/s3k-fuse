@@ -21,7 +21,9 @@ export async function GET(_request: Request, context: RouteContext) {
     const supabase = createServiceClient();
     const { data, error } = await supabase
       .from("conversations")
-      .select("id, customer_id, customers ( name, phone )")
+      .select(
+        "id, customer_id, customers ( name, phone, dpdp_consent, dpdp_consent_at, deletion_status )",
+      )
       .eq("customer_id", customerId)
       .order("last_message_at", { ascending: false })
       .limit(1)
@@ -38,6 +40,9 @@ export async function GET(_request: Request, context: RouteContext) {
         customer_id: data.customer_id,
         customer_name: data.customers?.name ?? null,
         customer_phone: data.customers?.phone ?? "",
+        dpdp_consent: data.customers?.dpdp_consent ?? false,
+        dpdp_consent_at: data.customers?.dpdp_consent_at ?? null,
+        deletion_status: data.customers?.deletion_status ?? null,
       },
     });
   } catch (error) {

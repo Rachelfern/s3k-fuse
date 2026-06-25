@@ -9,6 +9,8 @@ import {
   formatPaymentMethodLabel,
   formatShipmentStatusLabel,
   isAwaitingCodCollection,
+  isCodCollectionFailed,
+  isCodDeliveredWithFailedCollection,
   isInvalidOrderState,
   isShipmentBlockedForOrder,
 } from "@/lib/orders/order-lifecycle";
@@ -44,15 +46,20 @@ export const COURIER_OPTIONS = [
   "Self Delivery",
 ] as const;
 
-export const SHIPMENT_STATUS_OPTIONS: {
+export const LOGISTICS_SHIPMENT_STATUS_OPTIONS: {
   value: ShipmentStatus;
   label: string;
 }[] = [
-  { value: "awaiting_payment", label: "Awaiting Payment" },
   { value: "packed", label: "Packed" },
   { value: "in_transit", label: "In Transit" },
   { value: "delivered", label: "Delivered" },
 ];
+
+/** @deprecated Use LOGISTICS_SHIPMENT_STATUS_OPTIONS for the Shipments module. */
+export const SHIPMENT_STATUS_OPTIONS: {
+  value: ShipmentStatus;
+  label: string;
+}[] = LOGISTICS_SHIPMENT_STATUS_OPTIONS;
 
 export const SHIPMENT_STATUS_BLOCKED_TOOLTIP =
   "Payment must be completed before shipment processing.";
@@ -77,6 +84,9 @@ export const SHIPMENT_STATUS_SELECT_STYLES: Record<ShipmentStatus, string> = {
 
 export const PAYMENT_STATUS_CHIP_STYLES: Record<PaymentStatus, string> = {
   pending: "bg-amber-100 text-amber-700",
+  verification_pending: "bg-blue-100 text-blue-700",
+  retry_submitted: "bg-indigo-100 text-indigo-700",
+  rejected: "bg-red-100 text-red-700",
   verified: "bg-green-100 text-green-700",
   failed: "bg-red-100 text-red-700",
 };
@@ -88,6 +98,35 @@ export function formatINR(amount: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+export function isDeletedCustomerPhone(
+  phone: string | null | undefined,
+): boolean {
+  return phone?.startsWith("deleted_") ?? false;
+}
+
+export function formatAdminCustomerLabel(
+  name: string | null | undefined,
+  phone: string | null | undefined,
+): string {
+  if (isDeletedCustomerPhone(phone)) {
+    return "Deleted Customer";
+  }
+  return name?.trim() || phone?.trim() || "Unknown customer";
+}
+
+export function getAdminCustomerTooltip(
+  name: string | null | undefined,
+  phone: string | null | undefined,
+): string | undefined {
+  if (isDeletedCustomerPhone(phone)) {
+    return phone ?? undefined;
+  }
+  if (name?.trim() && phone?.trim() && name.trim() !== phone.trim()) {
+    return `${name.trim()} · ${phone.trim()}`;
+  }
+  return undefined;
 }
 
 const ADMIN_DATE_TIMEZONE = "Asia/Kolkata";
@@ -134,6 +173,8 @@ export {
   formatPaymentMethodLabel,
   formatShipmentStatusLabel,
   isAwaitingCodCollection,
+  isCodCollectionFailed,
+  isCodDeliveredWithFailedCollection,
   isInvalidOrderState,
   isShipmentBlockedForOrder,
 };

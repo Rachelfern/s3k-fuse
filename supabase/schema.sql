@@ -51,6 +51,12 @@ CREATE TABLE customers (
   order_count INTEGER NOT NULL DEFAULT 0 CHECK (order_count >= 0),
   total_spent NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (total_spent >= 0),
   consent_given BOOLEAN NOT NULL DEFAULT FALSE,
+  dpdp_consent BOOLEAN NOT NULL DEFAULT FALSE,
+  dpdp_consent_at TIMESTAMPTZ,
+  deletion_status TEXT CHECK (
+    deletion_status IS NULL OR deletion_status IN ('pending_deletion', 'deleted')
+  ),
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (business_id, phone)
 );
@@ -61,6 +67,24 @@ CREATE TABLE conversations (
   customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
   unread_count INTEGER NOT NULL DEFAULT 0 CHECK (unread_count >= 0),
   last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ai_issue_type TEXT NOT NULL DEFAULT 'NORMAL' CHECK (
+    ai_issue_type IN (
+      'NORMAL', 'QUESTION', 'ORDER_ISSUE', 'PAYMENT_ISSUE',
+      'REFUND_REQUEST', 'COMPLAINT', 'URGENT', 'SUPPORT'
+    )
+  ),
+  ai_priority_score INTEGER NOT NULL DEFAULT 10,
+  ai_priority_level TEXT NOT NULL DEFAULT 'normal' CHECK (
+    ai_priority_level IN ('critical', 'high', 'normal')
+  ),
+  ai_summary TEXT,
+  ai_customer_intent TEXT,
+  ai_suggested_action TEXT,
+  ai_suggested_reply TEXT,
+  ai_insights_at TIMESTAMPTZ,
+  needs_human_assistance BOOLEAN NOT NULL DEFAULT FALSE,
+  support_ticket_id TEXT,
+  support_ticket_created_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -103,7 +127,14 @@ CREATE TABLE orders (
   delivery_fee NUMERIC(10,2) NOT NULL DEFAULT 40 CHECK (delivery_fee >= 0),
   payment_utr TEXT,
   payment_status TEXT NOT NULL DEFAULT 'pending' CHECK (
-    payment_status IN ('pending', 'verified', 'failed')
+    payment_status IN (
+      'pending',
+      'verified',
+      'failed',
+      'verification_pending',
+      'rejected',
+      'retry_submitted'
+    )
   ),
   payment_method TEXT NOT NULL DEFAULT 'upi' CHECK (
     payment_method IN ('upi', 'card', 'cod')
@@ -115,6 +146,13 @@ CREATE TABLE orders (
   ),
   delivery_address TEXT,
   notes TEXT,
+  payment_screenshot_url TEXT,
+  payment_screenshot_path TEXT,
+  payment_screenshot_uploaded_at TIMESTAMPTZ,
+  payment_rejection_reason TEXT,
+  payment_rejected_at TIMESTAMPTZ,
+  payment_verified_at TIMESTAMPTZ,
+  payment_retry_submitted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -127,9 +165,17 @@ CREATE INDEX idx_products_business_id ON products (business_id);
 CREATE INDEX idx_products_active ON products (active) WHERE active = TRUE;
 
 CREATE INDEX idx_customers_business_phone ON customers (business_id, phone);
+CREATE INDEX idx_customers_deletion_status
+  ON customers (deletion_status)
+  WHERE deletion_status IS NOT NULL;
+CREATE INDEX idx_customers_deleted_at
+  ON customers (deleted_at)
+  WHERE deleted_at IS NOT NULL;
 
 CREATE INDEX idx_conversations_customer_created ON conversations (customer_id, created_at DESC);
 CREATE INDEX idx_conversations_business_id ON conversations (business_id);
+CREATE INDEX idx_conversations_ai_priority
+  ON conversations (ai_priority_score DESC, last_message_at DESC);
 
 CREATE INDEX idx_messages_conversation_created ON messages (conversation_id, created_at ASC);
 
@@ -242,6 +288,33 @@ CREATE POLICY orders_authenticated_write
   TO authenticated
   USING (true)
   WITH CHECK (true);
+
+-- ---------------------------------------------------------------------------
+-- DPDP audit log
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE dpdp_audit_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL CHECK (
+    event_type IN (
+      'consent_given',
+      'consent_withdrawn',
+      'deletion_requested',
+      'deletion_completed'
+    )
+  ),
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_dpdp_audit_log_customer_created
+  ON dpdp_audit_log (customer_id, created_at DESC);
+
+ALTER TABLE dpdp_audit_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY dpdp_audit_log_service_access
+  ON dpdp_audit_log FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- ---------------------------------------------------------------------------
 -- Inventory audit log + atomic stock deduction

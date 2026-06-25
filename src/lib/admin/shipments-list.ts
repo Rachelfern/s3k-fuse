@@ -154,6 +154,7 @@ export async function updateShipmentStatus(
       notes: current.notes,
     }),
     current.payment_status,
+    mapShipmentStatusFromDb(current.shipment_status),
     status,
   );
 

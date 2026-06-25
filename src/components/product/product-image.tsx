@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { getProductImageUrl } from "@/lib/product-images";
+import { getProductImageUrl, isNextImageHost } from "@/lib/product-images";
 import { cn } from "@/lib/utils";
 
 export type ProductImageSize = "xs" | "sm" | "md" | "lg";
@@ -28,6 +28,40 @@ interface ProductImageProps {
   className?: string;
 }
 
+function ProductPicture({
+  src,
+  name,
+  sizes,
+  className,
+}: {
+  src: string;
+  name: string;
+  sizes: string;
+  className?: string;
+}) {
+  if (isNextImageHost(src)) {
+    return (
+      <Image
+        src={src}
+        alt={name}
+        fill
+        className={cn("object-cover", className)}
+        sizes={sizes}
+      />
+    );
+  }
+
+  return (
+    // Admin-provided URLs may use any host — render without next/image restrictions.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={name}
+      className={cn("absolute inset-0 size-full object-cover", className)}
+    />
+  );
+}
+
 export function ProductImage({
   productId,
   name,
@@ -47,7 +81,11 @@ export function ProductImage({
         )}
       >
         {src ? (
-          <Image src={src} alt={name} fill className="object-cover" sizes="(max-width: 768px) 50vw, 240px" />
+          <ProductPicture
+            src={src}
+            name={name}
+            sizes="(max-width: 768px) 50vw, 240px"
+          />
         ) : (
           <div className="flex size-full items-center justify-center bg-gradient-to-br from-emerald-100 to-teal-100 text-4xl">
             🛒
@@ -66,13 +104,7 @@ export function ProductImage({
       )}
     >
       {src ? (
-        <Image
-          src={src}
-          alt={name}
-          fill
-          className="object-cover"
-          sizes={IMAGE_SIZES[size]}
-        />
+        <ProductPicture src={src} name={name} sizes={IMAGE_SIZES[size]} />
       ) : (
         <div className="flex size-full items-center justify-center bg-gradient-to-br from-emerald-100 to-teal-100 text-xl">
           🛒

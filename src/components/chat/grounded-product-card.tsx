@@ -125,7 +125,7 @@ export function GroundedProductCard({
 
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
           <div className="flex items-start justify-between gap-1.5">
-            <h3 className="text-[13px] font-medium leading-tight text-gray-900 md:text-sm lg:text-[15px]">
+            <h3 className="min-w-0 break-words text-[13px] font-medium leading-tight text-gray-900 md:text-sm lg:text-[15px]">
               {product.name_en}
             </h3>
             <p className="shrink-0 text-[13px] font-semibold text-[#128c7e] md:text-sm">

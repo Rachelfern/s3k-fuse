@@ -1,24 +1,27 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Minus, Plus, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import {
   CustomerPrimaryLink,
   CustomerQuickLink,
   CustomerShell,
   customerFieldClassName,
 } from "@/components/customer/customer-shell";
-import { ProductImage } from "@/components/product/product-image";
-import { StockStatusBadge } from "@/components/ui/stock-status-badge";
+import { ProductCard } from "@/components/product/product-card";
 import { useCart } from "@/hooks/use-cart";
 import { useActiveProducts } from "@/hooks/use-active-products";
-import { getStockStatus } from "@/lib/inventory/stock-status";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function ProductsPage() {
-  const { snapshot, getQuantity, applyCartUpdates, incrementItem, decrementItem } =
-    useCart();
+  const {
+    snapshot,
+    getQuantity,
+    applyCartUpdates,
+    incrementItem,
+    decrementItem,
+  } = useCart();
   const { products, loading } = useActiveProducts();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string>("all");
@@ -97,7 +100,7 @@ export default function ProductsPage() {
             className={cn(customerFieldClassName, "pl-9")}
           />
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="flex flex-wrap gap-2 pb-1">
           {categories.map((value) => (
             <button
               key={value}
@@ -123,103 +126,37 @@ export default function ProductsPage() {
           No products match your search.
         </p>
       ) : (
-        <ul className="flex flex-col gap-2">
+        <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredProducts.map((product) => {
             const quantity = getQuantity(product.id);
-            const inCart = quantity > 0;
-            const stockStatus = getStockStatus(product.stock);
-            const isOutOfStock = stockStatus === "out_of_stock";
-            const atStockLimit = quantity >= product.stock;
 
             return (
-              <li
-                key={product.id}
-                className="overflow-hidden rounded-[18px_18px_18px_4px] bg-white shadow-sm"
-              >
-                <div className="flex gap-3 p-3">
-                  <ProductImage
-                    productId={product.id}
-                    name={product.name_en}
-                    imageUrl={product.image_url}
-                    size="sm"
-                  />
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h2 className="text-sm font-semibold leading-tight text-gray-900">
-                          {product.name_en}
-                        </h2>
-                        {product.category ? (
-                          <p className="mt-0.5 text-[11px] text-gray-400">
-                            {product.category}
-                          </p>
-                        ) : null}
-                        <div className="mt-1">
-                          <StockStatusBadge stock={product.stock} showCount />
-                        </div>
-                      </div>
-                      <p className="shrink-0 text-sm font-bold text-[var(--whatsapp-accent)]">
-                        {formatCurrency(product.price)}
-                      </p>
-                    </div>
-
-                    {product.description ? (
-                      <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-gray-500">
-                        {product.description}
-                      </p>
-                    ) : null}
-
-                    {inCart ? (
-                      <div className="mt-3 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => decrementItem(product.id)}
-                            className="flex size-8 items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-gray-700 transition-colors hover:bg-gray-100"
-                            aria-label={`Decrease ${product.name_en} quantity`}
-                          >
-                            <Minus className="size-4" />
-                          </button>
-                          <span className="min-w-[1.5rem] text-center text-sm font-semibold tabular-nums text-gray-900">
-                            {quantity}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => incrementItem(product.id)}
-                            disabled={atStockLimit}
-                            className="flex size-8 items-center justify-center rounded-full bg-[var(--whatsapp-primary)] text-white transition-colors hover:bg-[var(--whatsapp-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40"
-                            aria-label={`Increase ${product.name_en} quantity`}
-                          >
-                            <Plus className="size-4" />
-                          </button>
-                        </div>
-                        <p className="text-xs font-medium text-gray-500">
-                          {formatCurrency(product.price * quantity)}
-                        </p>
-                      </div>
-                    ) : isOutOfStock ? (
-                      <p className="mt-3 text-xs font-medium text-red-600">
-                        Out of stock
-                      </p>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          addProduct(
-                            product.id,
-                            product.name_en,
-                            product.price,
-                            product.image_url,
-                          )
-                        }
-                        className="mt-3 rounded-full bg-[var(--whatsapp-primary)] px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[var(--whatsapp-primary-hover)]"
-                      >
-                        Add to cart
-                      </button>
-                    )}
-                  </div>
-                </div>
+              <li key={product.id} className="min-w-0">
+                <ProductCard
+                  product={{
+                    id: product.id,
+                    business_id: "",
+                    name: product.name_en,
+                    description: product.description ?? "",
+                    price: product.price,
+                    rating: 4.5,
+                    reviewCount: 0,
+                    image_url: product.image_url,
+                    imageEmoji: "📦",
+                    imageGradient: "from-gray-100 to-gray-200",
+                  }}
+                  quantity={quantity}
+                  onAdd={() =>
+                    addProduct(
+                      product.id,
+                      product.name_en,
+                      product.price,
+                      product.image_url,
+                    )
+                  }
+                  onIncrement={() => incrementItem(product.id)}
+                  onDecrement={() => decrementItem(product.id)}
+                />
               </li>
             );
           })}

@@ -22,7 +22,7 @@ export function ChatMessages({
   onCartUpdated,
 }: ChatMessagesProps) {
   return (
-    <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-2 py-2 md:px-4 lg:px-6">
+    <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto px-2 py-2 md:px-4 lg:px-6">
       {messages.map((message) => (
         <ChatMessageBubble
           key={message.id}

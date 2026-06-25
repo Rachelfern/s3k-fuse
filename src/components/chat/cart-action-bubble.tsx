@@ -159,6 +159,7 @@ export function CartActionBubble({
           <div className="chat-attachment-max w-fit">
             <QuickReplyChips
               intent={intent}
+              content={content}
               disabled={disabled}
               onSelect={onQuickReply}
               onNavigate={onNavigate}

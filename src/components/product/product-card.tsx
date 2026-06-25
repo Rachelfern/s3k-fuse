@@ -56,7 +56,7 @@ export function ProductCard({
         <div className="flex items-start justify-between gap-2">
           <h3
             className={cn(
-              "font-semibold leading-tight text-foreground",
+              "min-w-0 break-words font-semibold leading-tight text-foreground",
               compact ? "text-sm" : "text-base"
             )}
           >

@@ -6,7 +6,7 @@ import {
   GroundingIndicator,
 } from "@/components/chat/grounded-product-card";
 import { catalogDebug } from "@/lib/ai/catalog-debug";
-import { orderProductsByIds } from "@/lib/ai/product-catalog";
+import { orderProductsByIds } from "@/lib/ai/product-catalog-utils";
 import { useInStockProducts } from "@/hooks/use-in-stock-products";
 import { matchProductsInText } from "@/lib/ai/product-grounding";
 

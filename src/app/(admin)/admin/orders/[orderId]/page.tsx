@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AdminDateTimeCell } from "@/components/admin/admin-datetime-cell";
+import { CodCollectionFailedBanner } from "@/components/admin/cod-collection-failed-banner";
 import { ProductImage } from "@/components/product/product-image";
 import {
   COURIER_OPTIONS,
@@ -14,18 +16,19 @@ import {
   formatShipmentStatusLabel,
   formatStatusLabel,
   isAwaitingCodCollection,
+  isCodCollectionFailed,
+  isCodDeliveredWithFailedCollection,
   isInvalidOrderState,
   isShipmentBlockedForOrder,
-  ORDER_STATUSES,
+  ORDER_STATUS_CHIP_STYLES,
   PAYMENT_STATUS_CHIP_STYLES,
   SHIPMENT_STATUS_BLOCKED_TOOLTIP,
-  SHIPMENT_STATUS_OPTIONS,
   SHIPMENT_STATUS_SELECT_STYLES,
 } from "@/lib/admin/order-utils";
 import type { OrderDetail, OrderUpdate } from "@/lib/admin/order-detail";
-import { orderStatusFromShipment } from "@/lib/orders/order-lifecycle";
+import { isUpiAwaitingVerification } from "@/lib/orders/order-lifecycle";
 import { serializeErrorForLog } from "@/lib/supabase/errors";
-import type { OrderStatus, PaymentStatus, ShipmentStatus } from "@/lib/types";
+import type { PaymentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 async function fetchOrderDetailFromApi(orderId: string): Promise<OrderDetail | null> {
@@ -89,6 +92,14 @@ export default function AdminOrderDetailPage() {
   const [toastVisible, setToastVisible] = useState(false);
   const [trackingId, setTrackingId] = useState("");
   const [logisticsNotes, setLogisticsNotes] = useState("");
+  const [verifyingPayment, setVerifyingPayment] = useState(false);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectError, setRejectError] = useState<string | null>(null);
+  const [codActionBusy, setCodActionBusy] = useState(false);
+  const [paymentScreenshotUrl, setPaymentScreenshotUrl] = useState<string | null>(
+    null,
+  );
 
   const showToast = useCallback(() => {
     setToastVisible(true);
@@ -113,6 +124,23 @@ export default function AdminOrderDetailPage() {
       setTrackingId(detail?.tracking_id ?? "");
       setLogisticsNotes(detail?.notes ?? "");
       setError(detail ? null : "Order not found.");
+
+      if (detail?.payment_screenshot_path) {
+        const screenshotResponse = await fetch(
+          `/api/admin/orders/${encodeURIComponent(orderId)}/payment-screenshot`,
+          { cache: "no-store" },
+        );
+        if (screenshotResponse.ok) {
+          const screenshotData = (await screenshotResponse.json()) as {
+            url?: string | null;
+          };
+          setPaymentScreenshotUrl(screenshotData.url ?? null);
+        } else {
+          setPaymentScreenshotUrl(null);
+        }
+      } else {
+        setPaymentScreenshotUrl(null);
+      }
     } catch (loadError) {
       const message =
         loadError instanceof Error
@@ -146,16 +174,6 @@ export default function AdminOrderDetailPage() {
     [orderId, showToast],
   );
 
-  async function handleStatusChange(nextStatus: OrderStatus) {
-    try {
-      await saveOrderFields({ status: nextStatus });
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error ? saveError.message : "Failed to save status.",
-      );
-    }
-  }
-
   async function handleCourierChange(courier: string) {
     try {
       await saveOrderFields({
@@ -184,22 +202,6 @@ export default function AdminOrderDetailPage() {
     }
   }
 
-  async function handleShipmentStatusChange(nextShipment: ShipmentStatus) {
-    const mappedStatus = orderStatusFromShipment(nextShipment);
-    const fields: OrderUpdate = { shipment_status: nextShipment };
-    if (mappedStatus) fields.status = mappedStatus;
-
-    try {
-      await saveOrderFields(fields);
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to save shipment status.",
-      );
-    }
-  }
-
   async function handleNotesBlur() {
     if (!order || logisticsNotes === (order.notes ?? "")) return;
 
@@ -214,15 +216,126 @@ export default function AdminOrderDetailPage() {
     }
   }
 
+  async function handleUpiPaymentVerification(
+    action: "verify" | "reject",
+    reason?: string,
+  ) {
+    if (!order || verifyingPayment) return;
+
+    setVerifyingPayment(true);
+    setError(null);
+    setRejectError(null);
+
+    try {
+      const response = await fetch(
+        `/api/admin/orders/${encodeURIComponent(order.id)}/payment-verification`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            ...(action === "reject" ? { rejectReason: reason?.trim() } : {}),
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? `Request failed (${response.status})`);
+      }
+
+      setRejectModalOpen(false);
+      setRejectReason("");
+      await loadOrder();
+      showToast();
+    } catch (verifyError) {
+      const message =
+        verifyError instanceof Error
+          ? verifyError.message
+          : "Failed to update payment verification.";
+      if (action === "reject" && rejectModalOpen) {
+        setRejectError(message);
+      } else {
+        setError(message);
+      }
+    } finally {
+      setVerifyingPayment(false);
+    }
+  }
+
+  function openRejectModal() {
+    setRejectReason("");
+    setRejectError(null);
+    setRejectModalOpen(true);
+  }
+
   async function handlePaymentStatusChange(nextPaymentStatus: PaymentStatus) {
     try {
       await saveOrderFields({ payment_status: nextPaymentStatus });
+      if (nextPaymentStatus === "failed") {
+        await loadOrder();
+      }
     } catch (saveError) {
       setError(
         saveError instanceof Error
           ? saveError.message
           : "Failed to save payment status.",
       );
+    }
+  }
+
+  async function handleCodMarkCollected() {
+    setCodActionBusy(true);
+    try {
+      await saveOrderFields({ payment_status: "verified" });
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to mark payment as collected.",
+      );
+    } finally {
+      setCodActionBusy(false);
+    }
+  }
+
+  async function handleCodRescheduleCollection() {
+    setCodActionBusy(true);
+    try {
+      await saveOrderFields({ payment_status: "pending" });
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to reschedule collection.",
+      );
+    } finally {
+      setCodActionBusy(false);
+    }
+  }
+
+  async function handleCodCancelOrder() {
+    if (
+      !window.confirm(
+        "Cancel this order? The customer will no longer be able to complete COD collection.",
+      )
+    ) {
+      return;
+    }
+
+    setCodActionBusy(true);
+    try {
+      await saveOrderFields({ status: "cancelled" });
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to cancel order.",
+      );
+    } finally {
+      setCodActionBusy(false);
     }
   }
 
@@ -253,6 +366,15 @@ export default function AdminOrderDetailPage() {
         order.shipment_status,
       )
     : false;
+  const codCollectionFailed = order
+    ? isCodCollectionFailed(order.payment_method, order.payment_status)
+    : false;
+  const codDeliveredWithFailedCollection = order
+    ? isCodDeliveredWithFailedCollection(order)
+    : false;
+  const upiVerificationPending = order
+    ? isUpiAwaitingVerification(order.payment_method, order.payment_status)
+    : false;
 
   if (loading) {
     return (
@@ -279,11 +401,66 @@ export default function AdminOrderDetailPage() {
     <>
       <SaveToast visible={toastVisible} />
 
-      <div className="space-y-6 p-6">
+      {rejectModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+            <h3 className="text-base font-semibold text-gray-900">
+              Reject payment verification
+            </h3>
+            <p className="mt-1 text-sm text-gray-600">
+              Tell the customer why the payment could not be verified. They will
+              receive a chat notification and can retry without rebuilding their cart.
+            </p>
+            <textarea
+              value={rejectReason}
+              onChange={(event) => setRejectReason(event.target.value)}
+              rows={4}
+              placeholder="e.g. Screenshot amount does not match order total"
+              className="mt-4 w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+            />
+            {rejectError ? (
+              <p className="mt-2 text-xs text-red-600">{rejectError}</p>
+            ) : null}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={verifyingPayment}
+                onClick={() => setRejectModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={verifyingPayment || !rejectReason.trim()}
+                onClick={() =>
+                  void handleUpiPaymentVerification("reject", rejectReason)
+                }
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Reject Payment
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="admin-page">
         {error ? (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
+        ) : null}
+
+        {codCollectionFailed ? (
+          <CodCollectionFailedBanner
+            delivered={codDeliveredWithFailedCollection}
+            customerId={order.customer_id}
+            busy={codActionBusy}
+            onMarkCollected={() => void handleCodMarkCollected()}
+            onRescheduleCollection={() => void handleCodRescheduleCollection()}
+            onCancelOrder={() => void handleCodCancelOrder()}
+          />
         ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -307,19 +484,14 @@ export default function AdminOrderDetailPage() {
             </div>
           </div>
 
-          <select
-            value={order.status}
-            onChange={(event) =>
-              void handleStatusChange(event.target.value as OrderStatus)
-            }
-            className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium capitalize text-gray-700 shadow-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+          <span
+            className={cn(
+              "inline-flex rounded-full px-3 py-1.5 text-sm font-medium capitalize",
+              ORDER_STATUS_CHIP_STYLES[order.status],
+            )}
           >
-            {ORDER_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {formatStatusLabel(status)}
-              </option>
-            ))}
-          </select>
+            {formatStatusLabel(order.status)}
+          </span>
         </div>
 
         <div className="flex flex-col gap-6 lg:flex-row">
@@ -409,7 +581,7 @@ export default function AdminOrderDetailPage() {
               <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
                 💳 Payment Audit
               </h3>
-              <div className="mt-4 grid grid-cols-2 gap-4">
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-xs text-gray-400">Payment Method</p>
                   <p className="mt-1 text-sm font-medium text-gray-900">
@@ -456,6 +628,99 @@ export default function AdminOrderDetailPage() {
                   )}
                 </div>
               </div>
+              {upiVerificationPending ? (
+                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <p className="text-xs font-medium text-blue-800">
+                    {order.payment_status === "retry_submitted"
+                      ? "UPI Retry Submitted"
+                      : "UPI Verification Pending"}
+                  </p>
+                  <p className="mt-1 text-xs text-blue-700/80">
+                    {order.payment_status === "retry_submitted"
+                      ? "Customer resubmitted payment proof. Review the latest screenshot before approving."
+                      : "Review the payment screenshot or check your UPI app / bank statement before approving."}
+                  </p>
+                  {order.payment_retry_submitted_at ? (
+                    <p className="mt-2 text-[10px] text-blue-700/70">
+                      Retry submitted{" "}
+                      {new Intl.DateTimeFormat("en-IN", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      }).format(new Date(order.payment_retry_submitted_at))}
+                    </p>
+                  ) : null}
+                  {paymentScreenshotUrl ? (
+                    <div className="mt-3 overflow-hidden rounded-lg border border-blue-100 bg-white p-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={paymentScreenshotUrl}
+                        alt="Customer UPI payment screenshot"
+                        className="max-h-64 w-full object-contain"
+                      />
+                      {order.payment_screenshot_uploaded_at ? (
+                        <p className="mt-2 text-[10px] text-gray-500">
+                          Uploaded{" "}
+                          {new Intl.DateTimeFormat("en-IN", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          }).format(new Date(order.payment_screenshot_uploaded_at))}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : order.payment_screenshot_path ? (
+                    <p className="mt-2 text-xs text-amber-700">
+                      Screenshot uploaded but preview unavailable.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs text-blue-700/70">
+                      No payment screenshot uploaded yet.
+                    </p>
+                  )}
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={verifyingPayment}
+                      onClick={() => void handleUpiPaymentVerification("verify")}
+                      className="bg-green-600 hover:bg-green-700"
+                    >
+                      Verify Payment
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={verifyingPayment}
+                      onClick={openRejectModal}
+                      className="border-red-200 text-red-700 hover:bg-red-50"
+                    >
+                      Reject Payment
+                    </Button>
+                  </div>
+                </div>
+              ) : order.payment_status === "rejected" ? (
+                <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+                  <p className="text-xs font-medium text-red-800">Payment Rejected</p>
+                  {order.payment_rejection_reason ? (
+                    <p className="mt-1 text-xs text-red-700">
+                      Reason: {order.payment_rejection_reason}
+                    </p>
+                  ) : null}
+                  {order.payment_rejected_at ? (
+                    <p className="mt-2 text-[10px] text-red-700/70">
+                      Rejected{" "}
+                      {new Intl.DateTimeFormat("en-IN", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      }).format(new Date(order.payment_rejected_at))}
+                    </p>
+                  ) : null}
+                  <p className="mt-2 text-xs text-red-700/80">
+                    Customer has been notified and can retry payment without
+                    rebuilding their cart.
+                  </p>
+                </div>
+              ) : null}
             </div>
 
             <div
@@ -463,9 +728,11 @@ export default function AdminOrderDetailPage() {
                 "rounded-xl border bg-white p-5",
                 stateInconsistent
                   ? "border-red-300 bg-red-50/40"
-                  : awaitingCodCollection
-                    ? "border-amber-200 bg-amber-50/40"
-                    : "border-gray-200",
+                  : codCollectionFailed
+                    ? "border-amber-300 bg-amber-50/40"
+                    : awaitingCodCollection
+                      ? "border-amber-200 bg-amber-50/40"
+                      : "border-gray-200",
               )}
             >
               <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
@@ -475,12 +742,17 @@ export default function AdminOrderDetailPage() {
                 <p className="mt-2 text-xs font-medium text-red-600">
                   Inconsistent state: shipment is ahead of payment verification.
                 </p>
+              ) : codCollectionFailed ? (
+                <p className="mt-2 text-xs font-medium text-amber-800">
+                  COD collection failed — resolve payment before treating this order
+                  as complete.
+                </p>
               ) : awaitingCodCollection ? (
                 <p className="mt-2 text-xs font-medium text-amber-700">
                   Awaiting COD collection
                 </p>
               ) : null}
-              <div className="mt-4 grid grid-cols-2 gap-4">
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-xs text-gray-400">Payment Status</p>
                   <span
@@ -564,43 +836,22 @@ export default function AdminOrderDetailPage() {
                 </div>
 
                 <div>
-                  <label
-                    htmlFor="shipment-status"
-                    className="text-xs text-gray-400"
-                  >
-                    Shipment Status
-                  </label>
-                  <div
-                    className="relative mt-1"
-                    title={
-                      shipmentBlocked ? SHIPMENT_STATUS_BLOCKED_TOOLTIP : undefined
-                    }
-                  >
-                    <select
-                      id="shipment-status"
-                      value={order.shipment_status}
-                      disabled={shipmentBlocked}
-                      onChange={(event) =>
-                        void handleShipmentStatusChange(
-                          event.target.value as ShipmentStatus,
-                        )
-                      }
+                  <p className="text-xs text-gray-400">Shipment Status</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span
                       className={cn(
-                        "w-full rounded-lg border px-3 py-2 text-sm font-medium capitalize focus:outline-none focus:ring-1 focus:ring-green-500",
+                        "inline-flex rounded px-2 py-0.5 text-xs font-medium capitalize",
                         SHIPMENT_STATUS_SELECT_STYLES[order.shipment_status],
-                        shipmentBlocked &&
-                          "cursor-not-allowed opacity-60",
                       )}
                     >
-                      {SHIPMENT_STATUS_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                      {order.shipment_status === "assigned" ? (
-                        <option value="assigned">Assigned (legacy)</option>
-                      ) : null}
-                    </select>
+                      {formatShipmentStatusLabel(order.shipment_status)}
+                    </span>
+                    <Link
+                      href="/admin/shipments"
+                      className="text-xs font-medium text-green-600 hover:text-green-700"
+                    >
+                      Manage in Shipments →
+                    </Link>
                   </div>
                   {shipmentBlocked ? (
                     <p className="mt-1.5 text-xs text-amber-700">

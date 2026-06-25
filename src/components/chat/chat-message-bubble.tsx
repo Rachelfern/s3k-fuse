@@ -26,13 +26,13 @@ export function ChatMessageBubble({
     <div className={isCustomer ? "chat-row-outgoing" : "chat-row-incoming"}>
       <div
         className={cn(
-          "chat-bubble-max w-fit rounded-[18px] px-2.5 py-1.5 shadow-sm",
+          "chat-bubble-max min-w-0 max-w-full w-fit overflow-hidden rounded-[18px] px-2.5 py-1.5 shadow-sm",
           isCustomer
             ? "rounded-br-[4px] bg-[#dcf8c6] text-gray-900"
             : "rounded-bl-[4px] bg-white text-gray-900",
         )}
       >
-        <p className="whitespace-pre-wrap text-[14px] leading-snug">
+        <p className="chat-bubble-content whitespace-pre-wrap text-[14px] leading-snug">
           {message.content}
         </p>
 

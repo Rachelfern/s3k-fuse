@@ -7,7 +7,7 @@ import { mockBusiness } from "@/lib/mock/business";
 
 export default function HomePage() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[var(--whatsapp-accent)]/10 via-background to-background px-6">
+    <main className="flex min-h-screen flex-col items-center justify-center overflow-x-hidden bg-gradient-to-b from-[var(--whatsapp-accent)]/10 via-background to-background px-4 py-8 sm:px-6">
       <div className="flex w-full max-w-md flex-col items-center gap-8 text-center">
         <S3KLogo size="lg" />
 

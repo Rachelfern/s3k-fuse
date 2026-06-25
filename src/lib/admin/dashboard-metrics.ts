@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase/service-client";
 import { isMissingColumnError } from "@/lib/supabase/errors";
 import { resolvePaymentMethod } from "@/lib/orders/order-lifecycle";
 import { mapShipmentStatusFromDb } from "@/lib/orders/shipment-status-compat";
+import type { ReturnMetrics } from "@/lib/orders/return-management-service";
+import { fetchReturnMetrics } from "@/lib/orders/return-management-service";
 
 const CONFIRMED_STATUSES: OrderStatus[] = [
   "confirmed",
@@ -33,6 +35,7 @@ export interface RecentOrderRow {
 export interface DashboardData {
   metrics: DashboardMetrics;
   recentOrders: RecentOrderRow[];
+  returnMetrics: ReturnMetrics | null;
 }
 
 function buildRecentOrdersSelect(includePaymentMethod: boolean): string {
@@ -83,7 +86,7 @@ async function fetchRecentOrders(
 export async function fetchDashboardMetrics(): Promise<DashboardData> {
   const supabase = createServiceClient();
 
-  const [totalResult, revenueResult, pendingResult, confirmedResult, recentResult] =
+  const [totalResult, revenueResult, pendingResult, confirmedResult, recentResult, returnMetricsResult] =
     await Promise.all([
       supabase.from("orders").select("id", { count: "exact", head: true }),
       supabase
@@ -93,12 +96,13 @@ export async function fetchDashboardMetrics(): Promise<DashboardData> {
       supabase
         .from("orders")
         .select("id", { count: "exact", head: true })
-        .eq("payment_status", "pending"),
+        .in("payment_status", ["pending", "verification_pending", "retry_submitted"]),
       supabase
         .from("orders")
         .select("id", { count: "exact", head: true })
         .in("status", CONFIRMED_STATUSES),
       fetchRecentOrders(supabase),
+      fetchReturnMetrics().catch(() => null),
     ]);
 
   if (totalResult.error) throw totalResult.error;
@@ -148,5 +152,5 @@ export async function fetchDashboardMetrics(): Promise<DashboardData> {
     recentOrders: recentOrders.length,
   });
 
-  return { metrics, recentOrders };
+  return { metrics, recentOrders, returnMetrics: returnMetricsResult };
 }

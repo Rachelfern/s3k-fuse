@@ -1,4 +1,4 @@
-import { normalizeQuery } from "@/lib/hinglish";
+import { normalizeCommerceMessage } from "@/lib/hinglish";
 
 /** English word quantities → digits (applied before catalog lookup). */
 export const WORD_NUMBERS: Record<string, number> = {
@@ -28,7 +28,34 @@ const CART_ACTION_PATTERNS = [
   /\b(?:i\s+)?(?:want|would like|need)\s+(?!to\b)/gi,
   /\b(?:in|to|into)\s+(?:my\s+)?(?:cart|basket|bag)\b/gi,
   /\b(?:this|that|it)\b/gi,
+  /\b(?:chahiye|chaiye|chahie|chiye|chaie)\b/gi,
 ];
+
+const MULTI_PRODUCT_CONNECTOR =
+  /\s+(?:aur|and|plus|\+|with|along\s+with)\s+/i;
+
+/** Split a message into per-product segments joined by aur/and/plus/etc. */
+export function splitMultiProductMessage(message: string): string[] {
+  const normalized = normalizeWordQuantities(message)
+    .replace(/\b(?:chahiye|chaiye|chahie|chiye|chaie|please|plz)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return [];
+
+  const segments = normalized
+    .split(MULTI_PRODUCT_CONNECTOR)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  return segments.length > 0 ? segments : [normalized];
+}
+
+export function extractProductSegments(message: string): ExtractedProductEntity[] {
+  return splitMultiProductMessage(message).map((segment) =>
+    extractProductEntity(segment),
+  );
+}
 
 const WEIGHT_PATTERN =
   /(\d+(?:\.\d+)?)\s*(kg|kilograms?|g|grams?|gm)\b/gi;
@@ -43,7 +70,7 @@ const QUANTITY_ONLY_TOKENS = new Set([
 ]);
 
 export function normalizeWordQuantities(text: string): string {
-  let normalized = normalizeQuery(text);
+  let normalized = normalizeCommerceMessage(text);
   for (const [word, value] of Object.entries(WORD_NUMBERS)) {
     normalized = normalized.replace(
       new RegExp(`\\b${word}\\b`, "gi"),

@@ -110,8 +110,34 @@ export async function groqChat(options: GroqChatOptions): Promise<GroqChatResult
   }
 }
 
+export async function groqChatWithRetry(
+  options: GroqChatOptions,
+  retries = 1,
+): Promise<GroqChatResult> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await groqChat(options);
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        console.warn("[GROQ] Request failed, retrying…", {
+          reason: options.reason,
+          attempt: attempt + 1,
+        });
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 export const GROQ_UNAVAILABLE_MESSAGE =
   "Sorry, recommendations are temporarily unavailable.";
 
 export const GROQ_CONVERSATIONAL_FALLBACK =
   "Thanks for your message — I can help with products, recommendations, orders, or your cart.";
+
+export const NO_MATCHING_PRODUCTS_MESSAGE =
+  "I couldn't find matching products. Try another search.";

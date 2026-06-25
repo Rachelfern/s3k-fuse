@@ -93,7 +93,7 @@ export default function AdminOrdersPage() {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="admin-page">
       <div>
         <h2 className="text-2xl font-bold text-gray-900">Orders Overview</h2>
         <p className="mt-1 text-sm text-gray-500">

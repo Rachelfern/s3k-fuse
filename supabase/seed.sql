@@ -84,6 +84,18 @@ INSERT INTO products (id, business_id, name_en, name_hi, description, category, 
     99,
     TRUE,
     'https://images.unsplash.com/photo-1546094096-0df4bcaaa337?w=400'
+  ),
+  (
+    'a2000000-0000-4000-8000-000000000006',
+    'a1000000-0000-4000-8000-000000000001',
+    'Chicken Breast 500g',
+    'चिकन ब्रेस्ट',
+    'Lean boneless chicken breast — high protein',
+    'Meat',
+    100.00,
+    99,
+    TRUE,
+    'https://images.unsplash.com/photo-1604503468506-440b70325a3a?w=400'
   )
 ON CONFLICT (id) DO NOTHING;
 

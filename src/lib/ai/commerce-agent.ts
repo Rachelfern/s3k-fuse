@@ -1,11 +1,11 @@
 import { classifyAiRoute } from "@/lib/ai/ai-router";
 import { isGroqEnabled } from "@/lib/ai/groq-config";
+import { groqChatWithRetry } from "@/lib/ai/groq-client";
 import { formatCartReply } from "@/lib/cart-utils";
 import { runFallbackResolver } from "@/lib/chat/fallback-resolver";
 import { logCommerceIntent } from "@/lib/ai/message-intent";
 import { parseAgentResponse } from "@/lib/ai/parse-agent-response";
 import { buildCommerceAgentPrompt } from "@/lib/ai/prompts/system-prompt";
-import { generateOllamaJson } from "@/lib/ai/ollama-client";
 import {
   filterValidProductIds,
   resolveCartUpdates,
@@ -92,20 +92,27 @@ export async function runCommerceAgent(input: {
   try {
     const prompt = buildCommerceAgentPrompt(input);
 
-    console.log("[OLLAMA] Calling model:", {
+    console.log("[GROQ] Calling commerce agent:", {
       message: input.message,
       cartItemCount: input.cartSnapshot.itemCount,
       recentMessageCount: input.recentMessages.length,
     });
 
-    const raw = await generateOllamaJson(prompt);
+    const { content: raw } = await groqChatWithRetry({
+      system:
+        "You are a commerce assistant for an online grocery store. Respond with valid JSON only.",
+      user: prompt,
+      jsonMode: true,
+      reason: "Cart parsing",
+      message: input.message,
+    });
 
-    console.log("[OLLAMA] Raw response:", raw);
+    console.log("[GROQ] Raw commerce agent response:", raw);
 
     const parsed = parseAgentResponse(raw);
 
     if (!parsed) {
-      throw new Error("Invalid Ollama JSON payload");
+      throw new Error("Invalid Groq JSON payload");
     }
 
     const safeReply = sanitizeAssistantResponse(parsed.reply);
@@ -116,7 +123,7 @@ export async function runCommerceAgent(input: {
         throw new Error("Could not resolve add_to_cart products");
       }
 
-      console.log("[OLLAMA] Success:", {
+      console.log("[GROQ] Success:", {
         intent: parsed.intent,
         cartUpdateCount: cartUpdates.length,
       });
@@ -132,7 +139,7 @@ export async function runCommerceAgent(input: {
     }
 
     if (parsed.intent === "view_cart") {
-      console.log("[OLLAMA] Success:", {
+      console.log("[GROQ] Success:", {
         intent: parsed.intent,
       });
 
@@ -152,7 +159,7 @@ export async function runCommerceAgent(input: {
       throw new Error("No valid recommendation product ids");
     }
 
-    console.log("[OLLAMA] Success:", {
+    console.log("[GROQ] Success:", {
       intent: parsed.intent,
       productIdCount: productIds.length,
     });
@@ -166,7 +173,7 @@ export async function runCommerceAgent(input: {
       },
     };
   } catch (error) {
-    console.error("[ERROR] Ollama agent failed:", error);
+    console.error("[ERROR] Groq commerce agent failed:", error);
     console.log("[FALLBACK] Using regex fallback:", {
       message: input.message,
     });

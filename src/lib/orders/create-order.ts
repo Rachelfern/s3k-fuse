@@ -1,4 +1,4 @@
-import { formatOrderConfirmationMessage } from "@/lib/chat/conversation-flows";
+import { formatOrderConfirmationMessage, formatUpiPendingOrderMessage } from "@/lib/chat/conversation-flows";
 import { encodeOrderConfirmedIntent } from "@/lib/chat/quick-replies";
 import { BUSINESS_ID } from "@/lib/demo";
 import {
@@ -37,6 +37,7 @@ export type CreateOrderInput = {
     upiId?: string;
     razorpayPaymentId?: string;
     razorpayOrderId?: string;
+    upiAwaitingVerification?: boolean;
   };
 };
 
@@ -82,6 +83,8 @@ async function resolveCustomerId(
         name,
         address,
         consent_given: true,
+        dpdp_consent: true,
+        dpdp_consent_at: new Date().toISOString(),
       },
       { onConflict: "business_id,phone" },
     )
@@ -162,25 +165,36 @@ export async function createOrder(
   const deliveryFee = DEFAULT_DELIVERY_FEE;
   const totalAmount = input.subtotal + deliveryFee;
   const isCod = input.payment.method === "cod";
+  const isUpiManual =
+    input.payment.method === "upi" && input.payment.upiAwaitingVerification;
   const paymentReference =
     input.payment.razorpayPaymentId ??
     input.payment.transactionReference ??
-    (isCod ? `COD-${Date.now().toString(36).toUpperCase()}` : null);
+    (isCod ? `COD-${Date.now().toString(36).toUpperCase()}` : null) ??
+    (isUpiManual
+      ? `UPI-PENDING-${Date.now().toString(36).toUpperCase()}`
+      : null);
 
-  if (!paymentReference && !isCod) {
+  if (!paymentReference && !isCod && !isUpiManual) {
     throw new Error("Payment reference is required for online orders.");
   }
 
   const paymentNotes = isCod
     ? "Cash on Delivery — pay when your order arrives."
-    : input.payment.method === "card"
-      ? `Card payment via Razorpay (${paymentReference})`
-      : input.payment.upiId
-        ? `UPI payment via ${input.payment.upiId.trim()} (${paymentReference})`
-        : `Online payment (${paymentReference})`;
+    : isUpiManual
+      ? "UPI QR payment — awaiting manual verification."
+      : input.payment.method === "card"
+        ? `Card payment via Razorpay (${paymentReference})`
+        : input.payment.upiId
+          ? `UPI payment via ${input.payment.upiId.trim()} (${paymentReference})`
+          : `Online payment (${paymentReference})`;
 
-  const orderStatus: OrderStatus = isCod ? "payment_pending" : "confirmed";
-  const paymentStatus: PaymentStatus = isCod ? "pending" : "verified";
+  const orderStatus: OrderStatus = isCod || isUpiManual ? "payment_pending" : "confirmed";
+  const paymentStatus: PaymentStatus = isCod
+    ? "pending"
+    : isUpiManual
+      ? "verification_pending"
+      : "verified";
 
   const paymentMethod: PaymentMethod = input.payment.method;
 
@@ -350,7 +364,9 @@ export async function createOrder(
       const { error: messageError } = await supabase.from("messages").insert({
         conversation_id: input.conversationId,
         sender_type: "system",
-        content: formatOrderConfirmationMessage(order.id, totalAmount),
+        content: isUpiManual
+          ? formatUpiPendingOrderMessage(order.id, totalAmount)
+          : formatOrderConfirmationMessage(order.id, totalAmount),
         intent: encodeOrderConfirmedIntent(order.id),
         was_ai_drafted: false,
       });

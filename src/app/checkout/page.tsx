@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CustomerCard,
   CustomerPrimaryButton,
@@ -16,12 +16,12 @@ import { useCart } from "@/hooks/use-cart";
 import { useCheckout } from "@/hooks/use-checkout";
 import {
   getCustomerSession,
-  getVaartaAddress,
   saveVaartaProfile,
 } from "@/lib/chat/customer-storage";
+import { resetLocalCustomerJourneyAfterDeletion } from "@/lib/dpdp/reset-local-journey";
 import { DEFAULT_DELIVERY_FEE } from "@/lib/orders/create-order";
 import { formatCurrency } from "@/lib/format";
-import type { CheckoutDetails } from "@/types/checkout";
+import { emptyCheckoutDetails, type CheckoutDetails } from "@/types/checkout";
 
 function getInitialCheckoutDetails(
   checkoutDetails: CheckoutDetails,
@@ -30,20 +30,46 @@ function getInitialCheckoutDetails(
   return {
     name: session.customerName ?? checkoutDetails.name,
     phone: session.phone ?? checkoutDetails.phone,
-    address: getVaartaAddress() ?? checkoutDetails.address,
+    address: checkoutDetails.address,
   };
 }
 
 export default function CheckoutPage() {
   const router = useRouter();
   const { snapshot } = useCart();
-  const { checkoutDetails, setCheckoutDetails } = useCheckout();
+  const { checkoutDetails, setCheckoutDetails, resetCheckout } = useCheckout();
   const [form, setForm] = useState<CheckoutDetails>(() =>
     getInitialCheckoutDetails(checkoutDetails),
   );
   const [error, setError] = useState<string | null>(null);
 
   const isEmpty = snapshot.itemCount === 0;
+
+  useEffect(() => {
+    const session = getCustomerSession();
+    if (!session.customerId) return;
+
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/customer/profile?customerId=${encodeURIComponent(session.customerId!)}`,
+        );
+        if (!response.ok) return;
+
+        const profile = (await response.json()) as {
+          deletionStatus?: string;
+        };
+
+        if (profile.deletionStatus === "deleted") {
+          resetLocalCustomerJourneyAfterDeletion();
+          resetCheckout();
+          setForm(emptyCheckoutDetails);
+        }
+      } catch {
+        /* profile check is best-effort */
+      }
+    })();
+  }, [resetCheckout]);
 
   function updateField(field: keyof CheckoutDetails, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -61,7 +87,7 @@ export default function CheckoutPage() {
     }
 
     setError(null);
-    saveVaartaProfile({ name, phone });
+    saveVaartaProfile({ name, phone, address });
     setCheckoutDetails({ name, phone, address });
     router.push("/payment");
   }

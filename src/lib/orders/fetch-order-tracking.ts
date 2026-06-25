@@ -20,6 +20,8 @@ export type OrderTrackingRow = {
   shipment_status: ShipmentStatus;
   tracking_id: string | null;
   created_at: string;
+  payment_rejection_reason: string | null;
+  payment_rejected_at: string | null;
 };
 
 type OrderTrackingDbRow = {
@@ -32,11 +34,16 @@ type OrderTrackingDbRow = {
   shipment_status: string;
   tracking_id: string | null;
   created_at: string;
+  payment_rejection_reason?: string | null;
+  payment_rejected_at?: string | null;
 };
 
-function buildTrackingSelect(includePaymentMethod: boolean): string {
+function buildTrackingSelect(includePaymentMethod: boolean, includeRejection: boolean): string {
   const paymentMethodField = includePaymentMethod ? "payment_method, " : "";
-  return `id, status, total_amount, payment_utr, payment_status, ${paymentMethodField}shipment_status, tracking_id, created_at`;
+  const rejectionFields = includeRejection
+    ? "payment_rejection_reason, payment_rejected_at, "
+    : "";
+  return `id, status, total_amount, payment_utr, payment_status, ${paymentMethodField}${rejectionFields}shipment_status, tracking_id, created_at`;
 }
 
 function mapTrackingRow(data: OrderTrackingDbRow): OrderTrackingRow {
@@ -53,6 +60,8 @@ function mapTrackingRow(data: OrderTrackingDbRow): OrderTrackingRow {
     shipment_status: mapShipmentStatusFromDb(data.shipment_status),
     tracking_id: data.tracking_id,
     created_at: data.created_at,
+    payment_rejection_reason: data.payment_rejection_reason ?? null,
+    payment_rejected_at: data.payment_rejected_at ?? null,
   };
 }
 
@@ -61,12 +70,26 @@ export async function fetchOrderTracking(
   orderId: string,
 ): Promise<{ data: OrderTrackingRow | null; error: Error | null }> {
   let includePaymentMethod = true;
+  let includeRejection = true;
 
   let result = await supabase
     .from("orders")
-    .select(buildTrackingSelect(includePaymentMethod))
+    .select(buildTrackingSelect(includePaymentMethod, includeRejection))
     .eq("id", orderId)
     .maybeSingle();
+
+  if (
+    result.error &&
+    (isMissingColumnError(result.error, "payment_rejection_reason") ||
+      isMissingColumnError(result.error, "payment_rejected_at"))
+  ) {
+    includeRejection = false;
+    result = await supabase
+      .from("orders")
+      .select(buildTrackingSelect(includePaymentMethod, includeRejection))
+      .eq("id", orderId)
+      .maybeSingle();
+  }
 
   if (result.error && isMissingColumnError(result.error, "payment_method")) {
     if (process.env.NODE_ENV === "development") {
@@ -77,7 +100,7 @@ export async function fetchOrderTracking(
     includePaymentMethod = false;
     result = await supabase
       .from("orders")
-      .select(buildTrackingSelect(includePaymentMethod))
+      .select(buildTrackingSelect(includePaymentMethod, includeRejection))
       .eq("id", orderId)
       .maybeSingle();
   }
@@ -119,5 +142,9 @@ export function mapOrderTrackingUpdate(
     ),
     tracking_id: updated.tracking_id ?? current?.tracking_id ?? null,
     created_at: updated.created_at ?? current?.created_at ?? new Date().toISOString(),
+    payment_rejection_reason:
+      updated.payment_rejection_reason ?? current?.payment_rejection_reason ?? null,
+    payment_rejected_at:
+      updated.payment_rejected_at ?? current?.payment_rejected_at ?? null,
   };
 }

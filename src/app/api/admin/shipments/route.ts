@@ -9,8 +9,6 @@ import { diagnoseSupabaseError } from "@/lib/supabase/errors";
 import type { ShipmentStatus } from "@/lib/types";
 
 const VALID_STATUSES = new Set<ShipmentStatus>([
-  "awaiting_payment",
-  "assigned",
   "packed",
   "in_transit",
   "delivered",

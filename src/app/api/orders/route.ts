@@ -25,6 +25,7 @@ type OrderRequestBody = {
     razorpayPaymentId?: string;
     razorpayOrderId?: string;
     razorpaySignature?: string;
+    upiAwaitingVerification?: boolean;
   };
 };
 
@@ -42,6 +43,7 @@ export async function POST(request: Request) {
     const razorpayPaymentId = body.payment?.razorpayPaymentId?.trim();
     const razorpayOrderId = body.payment?.razorpayOrderId?.trim();
     const razorpaySignature = body.payment?.razorpaySignature?.trim();
+    const upiAwaitingVerification = body.payment?.upiAwaitingVerification === true;
 
     if (!name || !phone || !address) {
       return NextResponse.json(
@@ -57,7 +59,12 @@ export async function POST(request: Request) {
       );
     }
 
-    if (method !== "cod" && !transactionReference && !razorpayPaymentId) {
+    if (
+      method !== "cod" &&
+      !upiAwaitingVerification &&
+      !transactionReference &&
+      !razorpayPaymentId
+    ) {
       return NextResponse.json(
         { error: "Payment must be completed before placing the order." },
         { status: 400 },
@@ -127,6 +134,7 @@ export async function POST(request: Request) {
         upiId,
         razorpayPaymentId,
         razorpayOrderId,
+        upiAwaitingVerification,
       },
     });
 

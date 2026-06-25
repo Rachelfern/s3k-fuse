@@ -1,3 +1,4 @@
+import { isUpiPaymentReviewStatus } from "@/lib/orders/payment-verification-flow";
 import type {
   OrderStatus,
   PaymentMethod,
@@ -45,6 +46,24 @@ export const POST_PAYMENT_SHIPMENT_STATUSES: readonly ShipmentStatus[] = [
   "delivered",
 ];
 
+/** Logistics stages managed in the Shipments module. */
+export const LOGISTICS_SHIPMENT_STATUSES: readonly ShipmentStatus[] = [
+  "packed",
+  "in_transit",
+  "delivered",
+];
+
+/** @deprecated Use LOGISTICS_SHIPMENT_STATUSES — kept for migration compatibility. */
+export const FULFILLMENT_SHIPMENT_STAGES: readonly ShipmentStatus[] =
+  LOGISTICS_SHIPMENT_STATUSES;
+
+export const ORDER_DETAIL_ALLOWED_UPDATE_FIELDS = [
+  "delivery_courier",
+  "tracking_id",
+  "notes",
+  "payment_status",
+] as const;
+
 export class OrderStateValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -74,6 +93,44 @@ export function isPrepaidOrder(paymentMethod: PaymentMethod): boolean {
 
 export function isPaymentComplete(paymentStatus: PaymentStatus): boolean {
   return paymentStatus === "verified";
+}
+
+export function isUpiAwaitingVerification(
+  paymentMethod: PaymentMethod,
+  paymentStatus: PaymentStatus,
+): boolean {
+  return paymentMethod === "upi" && isUpiPaymentReviewStatus(paymentStatus);
+}
+
+export function isUpiPaymentRejected(
+  paymentMethod: PaymentMethod,
+  paymentStatus: PaymentStatus,
+): boolean {
+  return paymentMethod === "upi" && paymentStatus === "rejected";
+}
+
+export function canCustomerRetryUpiPayment(
+  paymentMethod: PaymentMethod,
+  paymentStatus: PaymentStatus,
+  orderStatus: OrderStatus,
+): boolean {
+  return (
+    paymentMethod === "upi" &&
+    paymentStatus === "rejected" &&
+    orderStatus === "payment_pending"
+  );
+}
+
+export function canCustomerUploadPaymentScreenshot(
+  paymentMethod: PaymentMethod,
+  paymentStatus: PaymentStatus,
+): boolean {
+  if (paymentMethod !== "upi") return false;
+  return (
+    paymentStatus === "verification_pending" ||
+    paymentStatus === "rejected" ||
+    paymentStatus === "retry_submitted"
+  );
 }
 
 export function isPostPaymentShipment(status: ShipmentStatus): boolean {
@@ -111,6 +168,24 @@ export function isAwaitingCodCollection(
   );
 }
 
+export function isCodCollectionFailed(
+  paymentMethod: PaymentMethod,
+  paymentStatus: PaymentStatus,
+): boolean {
+  return isCodOrder(paymentMethod) && paymentStatus === "failed";
+}
+
+export function isCodDeliveredWithFailedCollection(order: {
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  shipment_status: ShipmentStatus;
+}): boolean {
+  return (
+    isCodCollectionFailed(order.payment_method, order.payment_status) &&
+    order.shipment_status === "delivered"
+  );
+}
+
 export function shipmentRequiresPayment(
   paymentMethod: PaymentMethod,
   shipmentStatus: ShipmentStatus,
@@ -131,11 +206,85 @@ function shipmentValidationMessage(shipmentStatus: ShipmentStatus): string {
   }
 }
 
+function isLegacyPreFulfillment(status: ShipmentStatus): boolean {
+  return status === "awaiting_payment" || status === "assigned";
+}
+
+export function normalizeLogisticsShipmentStatus(
+  status: ShipmentStatus,
+): "packed" | "in_transit" | "delivered" {
+  if (isLegacyPreFulfillment(status)) return "packed";
+  if (status === "in_transit" || status === "delivered") return status;
+  return "packed";
+}
+
+function normalizeFulfillmentStage(status: ShipmentStatus): ShipmentStatus {
+  return normalizeLogisticsShipmentStatus(status);
+}
+
+function fulfillmentStageIndex(status: ShipmentStatus): number {
+  const normalized = normalizeFulfillmentStage(status);
+  const index = FULFILLMENT_SHIPMENT_STAGES.indexOf(normalized);
+  return index === -1 ? 0 : index;
+}
+
+/** Current logistics stage plus the single allowed next stage, if any. */
+export function getSelectableLogisticsShipmentStatuses(
+  currentStatus: ShipmentStatus,
+): ShipmentStatus[] {
+  const normalized = normalizeLogisticsShipmentStatus(currentStatus);
+  const currentIndex = LOGISTICS_SHIPMENT_STATUSES.indexOf(normalized);
+  const nextStatus = LOGISTICS_SHIPMENT_STATUSES[currentIndex + 1];
+  return nextStatus ? [normalized, nextStatus] : [normalized];
+}
+
+export function canAdvanceLogisticsShipmentStatus(
+  currentStatus: ShipmentStatus,
+): boolean {
+  const normalized = normalizeLogisticsShipmentStatus(currentStatus);
+  const currentIndex = LOGISTICS_SHIPMENT_STATUSES.indexOf(normalized);
+  return currentIndex < LOGISTICS_SHIPMENT_STATUSES.length - 1;
+}
+
+export function validateFulfillmentProgression(
+  currentShipmentStatus: ShipmentStatus,
+  nextShipmentStatus: ShipmentStatus,
+): void {
+  if (currentShipmentStatus === nextShipmentStatus) return;
+
+  if (
+    isLegacyPreFulfillment(currentShipmentStatus) &&
+    nextShipmentStatus === "packed"
+  ) {
+    return;
+  }
+
+  const currentIndex = fulfillmentStageIndex(currentShipmentStatus);
+  const nextIndex = fulfillmentStageIndex(nextShipmentStatus);
+
+  if (nextIndex !== currentIndex + 1) {
+    throw new OrderStateValidationError(
+      `Fulfillment must progress sequentially (${LOGISTICS_SHIPMENT_STATUSES.map(formatShipmentStatusLabel).join(" → ")}). Cannot move from ${formatShipmentStatusLabel(normalizeLogisticsShipmentStatus(currentShipmentStatus))} to ${formatShipmentStatusLabel(nextShipmentStatus)}.`,
+    );
+  }
+}
+
 export function validateShipmentStatusChange(
   paymentMethod: PaymentMethod,
   paymentStatus: PaymentStatus,
+  currentShipmentStatus: ShipmentStatus,
   nextShipmentStatus: ShipmentStatus,
 ): void {
+  if (
+    isPrepaidOrder(paymentMethod) &&
+    (paymentStatus === "rejected" || paymentStatus === "failed") &&
+    nextShipmentStatus !== currentShipmentStatus
+  ) {
+    throw new OrderStateValidationError(
+      "Cannot update shipment while payment is rejected or failed.",
+    );
+  }
+
   if (
     isPrepaidOrder(paymentMethod) &&
     !isPaymentComplete(paymentStatus) &&
@@ -144,6 +293,53 @@ export function validateShipmentStatusChange(
     throw new OrderStateValidationError(
       shipmentValidationMessage(nextShipmentStatus),
     );
+  }
+
+  validateFulfillmentProgression(currentShipmentStatus, nextShipmentStatus);
+}
+
+export function validateAdminOrderDetailUpdate(
+  current: Pick<OrderTrackingState, "payment_method" | "payment_status">,
+  fields: {
+    status?: OrderStatus;
+    shipment_status?: ShipmentStatus;
+    payment_status?: PaymentStatus;
+    delivery_courier?: string | null;
+    tracking_id?: string | null;
+    notes?: string | null;
+  },
+): void {
+  for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
+    if (fields[key] === undefined) continue;
+
+    if (key === "status") {
+      if (
+        fields.status === "cancelled" &&
+        isCodOrder(current.payment_method) &&
+        current.payment_status === "failed"
+      ) {
+        continue;
+      }
+
+      throw new OrderStateValidationError(
+        "Order fulfillment status is managed in the Shipments module.",
+      );
+    }
+
+    if (key === "shipment_status") {
+      throw new OrderStateValidationError(
+        "Shipment status must be updated from the Shipments module.",
+      );
+    }
+
+    if (
+      key === "payment_status" &&
+      !isCodOrder(current.payment_method)
+    ) {
+      throw new OrderStateValidationError(
+        "Prepaid payment status is updated through payment verification.",
+      );
+    }
   }
 }
 
@@ -166,6 +362,7 @@ export function validateOrderFieldsUpdate(
   validateShipmentStatusChange(
     paymentMethod,
     nextPaymentStatus,
+    current.shipment_status,
     nextShipmentStatus,
   );
 
@@ -189,11 +386,11 @@ function getPrepaidTrackingProgress(order: OrderTrackingState): {
   let completedThrough = 1;
   let currentStep: number | null = 2;
 
-  if (order.payment_status === "failed") {
+  if (order.payment_status === "failed" || order.payment_status === "rejected") {
     return { completedThrough: 1, currentStep: 2 };
   }
 
-  if (order.payment_status !== "verified") {
+  if (!isPaymentComplete(order.payment_status)) {
     return { completedThrough: 1, currentStep: 2 };
   }
 
@@ -237,9 +434,16 @@ function getCodTrackingProgress(order: OrderTrackingState): {
     completedThrough = Math.max(completedThrough, 4);
     currentStep = 5;
   } else if (order.shipment_status === "delivered") {
-    completedThrough = 5;
-    currentStep =
-      order.payment_status === "pending" ? 2 : null;
+    if (order.payment_status === "failed") {
+      completedThrough = 4;
+      currentStep = 2;
+    } else if (order.payment_status === "pending") {
+      completedThrough = 5;
+      currentStep = 2;
+    } else {
+      completedThrough = 5;
+      currentStep = null;
+    }
   }
 
   return { completedThrough, currentStep };
@@ -298,6 +502,9 @@ export function formatCustomerPaymentStatus(
 
   if (paymentStatus === "verified") return "Payment Verified";
   if (paymentStatus === "failed") return "Payment Failed";
+  if (paymentStatus === "rejected") return "Payment Rejected";
+  if (paymentStatus === "retry_submitted") return "Retry Submitted";
+  if (paymentStatus === "verification_pending") return "Verification Pending";
   return "Payment Pending";
 }
 
@@ -358,5 +565,10 @@ export function formatAdminPaymentStatusLabel(
 
   if (paymentStatus === "verified") return "Verified";
   if (paymentStatus === "failed") return "Failed";
+  if (paymentStatus === "rejected") return "Rejected";
+  if (paymentStatus === "retry_submitted") return "Retry Submitted";
+  if (paymentStatus === "verification_pending") {
+    return "UPI Verification Pending";
+  }
   return "Pending";
 }

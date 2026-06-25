@@ -20,6 +20,21 @@ export function isMissingColumnError(
   );
 }
 
+export function isMissingTableError(error: unknown, table?: string): boolean {
+  if (!isPostgrestError(error)) return false;
+  if (error.code !== "PGRST205" && error.code !== "42P01") return false;
+  if (!table) return true;
+  return error.message.toLowerCase().includes(table.toLowerCase());
+}
+
+export function isPersistenceTableError(error: unknown): boolean {
+  return (
+    isMissingTableError(error, "return_requests") ||
+    isMissingTableError(error, "return_request_items") ||
+    isMissingTableError(error, "support_tickets")
+  );
+}
+
 export function isCheckConstraintError(
   error: unknown,
   constraintHint?: string,
@@ -29,6 +44,18 @@ export function isCheckConstraintError(
     error.code === "23514" &&
     (!constraintHint ||
       error.message.toLowerCase().includes(constraintHint.toLowerCase()))
+  );
+}
+
+export function isReturnWorkflowSchemaError(error: unknown): boolean {
+  return (
+    isPersistenceTableError(error) ||
+    isCheckConstraintError(error, "return_requests_status_check") ||
+    isMissingColumnError(error, "customer_name") ||
+    isMissingColumnError(error, "pickup_address") ||
+    isMissingColumnError(error, "phone") ||
+    isMissingColumnError(error, "pickup_reference") ||
+    isMissingColumnError(error, "refund_reference")
   );
 }
 
@@ -48,15 +75,29 @@ export function formatSupabaseError(error: unknown): string {
 export function serializeErrorForLog(error: unknown): Record<string, unknown> {
   if (isPostgrestError(error)) {
     return {
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
+      message: error.message || "(no message)",
+      code: error.code ?? null,
+      details: error.details ?? null,
+      hint: error.hint ?? null,
     };
   }
 
   if (error instanceof Error) {
-    return { message: error.message, name: error.name };
+    return {
+      message: error.message || "(no message)",
+      name: error.name,
+      ...(error.cause !== undefined
+        ? { cause: serializeErrorForLog(error.cause) }
+        : {}),
+    };
+  }
+
+  if (typeof error === "object" && error !== null) {
+    try {
+      return { message: JSON.stringify(error) };
+    } catch {
+      return { message: Object.prototype.toString.call(error) };
+    }
   }
 
   return { message: String(error) };
@@ -90,6 +131,9 @@ export function diagnoseSupabaseError(error: unknown): string {
     case "23514":
       if (error.message.includes("shipment_status")) {
         return `Invalid shipment status for the current database schema. Run supabase/migrations/20250623100000_order_state_machine.sql. ${formatSupabaseError(error)}`;
+      }
+      if (error.message.includes("return_requests_status_check")) {
+        return `Return status schema is out of date. Run node scripts/apply-return-management-workflow.mjs. ${formatSupabaseError(error)}`;
       }
       return formatSupabaseError(error);
     default:

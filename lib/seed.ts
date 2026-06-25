@@ -71,6 +71,15 @@ const PRODUCTS = [
     image_url:
       "https://images.unsplash.com/photo-1546094096-0df4bcaaa337?w=400",
   },
+  {
+    id: "a2000000-0000-4000-8000-000000000006",
+    name_en: "Chicken Breast 500g",
+    name_hi: "चिकन ब्रेस्ट",
+    price: 100,
+    category: "Meat",
+    image_url:
+      "https://images.unsplash.com/photo-1604503468506-440b70325a3a?w=400",
+  },
 ] as const;
 
 const CUSTOMERS = [

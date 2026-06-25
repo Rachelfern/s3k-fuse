@@ -70,14 +70,23 @@
   }
 
   .chat-bubble-max {
-    max-width: 70%;
+    max-width: min(85%, 100%);
   }
 
   .chat-attachment-max {
-    max-width: 70%;
+    max-width: min(85%, 100%);
+  }
+
+  .chat-bubble-content {
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   @media (min-width: 768px) {
+    .chat-bubble-max {
+      max-width: 75%;
+    }
+
     .chat-attachment-max {
       max-width: min(75%, 28rem);
     }
@@ -107,6 +116,11 @@
   .chat-row-outgoing {
     display: flex;
     width: 100%;
+    min-width: 0;
+  }
+
+  .admin-page {
+    @apply space-y-6 p-4 md:p-6;
   }
 
   .chat-row-incoming {

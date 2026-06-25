@@ -27,7 +27,7 @@ export function ChatLayout({
   inputDisabled,
 }: ChatLayoutProps) {
   return (
-    <div className="chat-shell flex w-full flex-col bg-[var(--whatsapp-bg)]">
+    <div className="chat-shell flex w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-[var(--whatsapp-bg)]">
       <ChatHeader />
       <div className="whatsapp-pattern flex min-h-0 flex-1 flex-col">
         <ChatMessages

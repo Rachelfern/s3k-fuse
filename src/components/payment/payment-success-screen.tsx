@@ -15,17 +15,27 @@ type PaymentSuccessScreenProps = {
   totalAmount: number;
   variant: "payment" | "order";
   redirectDelayMs?: number;
+  chatHref?: string;
 };
 
 export function PaymentSuccessScreen({
   orderId,
   totalAmount,
   variant,
-  redirectDelayMs = 2000,
+  redirectDelayMs = 5000,
+  chatHref: chatHrefProp,
 }: PaymentSuccessScreenProps) {
-  const chatHref = buildChatOrderSuccessUrl(orderId, totalAmount);
-  const title =
-    variant === "payment" ? "Payment Successful" : "Order Placed";
+  const chatHref =
+    chatHrefProp ?? buildChatOrderSuccessUrl(orderId, totalAmount);
+
+  let title = variant === "payment" ? "Payment Successful" : "Order Placed";
+  if (chatHrefProp?.includes("paymentSubmitted=1")) {
+    title = "Payment Submitted";
+  } else if (chatHrefProp?.includes("paymentRetry=1") && variant === "order") {
+    title = "Payment Method Updated";
+  } else if (chatHrefProp?.includes("paymentRetry=1")) {
+    title = "Payment Retry Submitted";
+  }
 
   useEffect(() => {
     try {
@@ -68,7 +78,7 @@ export function PaymentSuccessScreen({
         <h1 className="text-lg font-bold text-gray-900">✅ {title}</h1>
         <p className="mt-2 text-sm text-gray-600">
           Order ID:{" "}
-          <span className="font-mono font-semibold text-gray-900">{orderId}</span>
+          <span className="break-all font-mono font-semibold text-gray-900">{orderId}</span>
         </p>
         <p className="mt-4 text-xs text-gray-500">
           Returning to chat in a moment…

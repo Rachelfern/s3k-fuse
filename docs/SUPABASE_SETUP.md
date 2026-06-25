@@ -30,11 +30,17 @@ Get the URI from **Settings → Database → Connection string → URI**.
 
 ### Payment method column (required for COD vs prepaid rules)
 
-If admin dashboard or checkout fails on `payment_method`, run:
+If admin dashboard, checkout, or `/my-data` export fails on `payment_method`, run:
 
-**SQL Editor:** `supabase/migrations/20250623110000_payment_method.sql`
+**Option A — SQL Editor:** `supabase/migrations/20250623110000_payment_method.sql`
 
-Or apply both migrations via the CLI script above (run each file, or paste both in SQL Editor).
+**Option B — CLI script:**
+
+```bash
+npm run db:migrate:payment-method
+```
+
+The app also falls back to inferring payment method from `payment_utr` / `notes` when the column is missing, but you should apply the migration for correct COD/UPI/card behaviour.
 
 ## 2. Run seed data
 

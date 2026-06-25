@@ -1,4 +1,7 @@
 import { PRODUCT_IDS } from "@/lib/demo";
+import { isNextImageHost, NEXT_IMAGE_HOSTNAMES } from "@/lib/next-image-hostnames";
+
+export { isNextImageHost, NEXT_IMAGE_HOSTNAMES };
 
 /** Canonical product images — must match supabase/seed.sql */
 export const PRODUCT_IMAGE_URLS: Record<string, string> = {
@@ -12,6 +15,8 @@ export const PRODUCT_IMAGE_URLS: Record<string, string> = {
     "https://images.unsplash.com/photo-1459411621453-7b03977f4bfc?w=400",
   [PRODUCT_IDS.tomatoes]:
     "https://images.unsplash.com/photo-1546094096-0df4bcaaa337?w=400",
+  [PRODUCT_IDS.chickenBreast]:
+    "https://images.unsplash.com/photo-1604503468506-440b70325a3a?w=400",
 };
 
 export function getProductImageUrl(input: {

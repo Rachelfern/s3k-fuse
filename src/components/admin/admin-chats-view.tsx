@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import {
+  ArrowLeft,
   CheckCircle,
   ChevronDown,
   ChevronRight,
@@ -26,10 +27,14 @@ import {
   type DraftSuggestion,
   type NextBestActionKey,
 } from "@/lib/ai/admin-chat-ai";
+import {
+  formatIssueTypeLabel,
+  priorityBadgeLabel,
+} from "@/lib/ai/issue-classifier";
 import { formatTime } from "@/lib/format";
 import type { ConversationListItem } from "@/lib/admin/conversations-list";
 import { createClient } from "@/lib/supabase/client";
-import type { Message } from "@/lib/types";
+import type { AiIssueType, AiPriorityLevel, Message } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface ActiveConversation {
@@ -37,6 +42,52 @@ interface ActiveConversation {
   customer_id: string;
   customer_name: string | null;
   customer_phone: string;
+  dpdp_consent: boolean;
+  dpdp_consent_at: string | null;
+  deletion_status: string | null;
+}
+
+function ConsentStatusBadge({ consented }: { consented: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        consented
+          ? "bg-green-100 text-green-700"
+          : "bg-amber-100 text-amber-700",
+      )}
+    >
+      {consented ? "Accepted" : "Not Accepted"}
+    </span>
+  );
+}
+
+function PriorityBadge({ level }: { level: AiPriorityLevel }) {
+  const emoji =
+    level === "critical" ? "🔴" : level === "high" ? "🟠" : "🟢";
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+        level === "critical" && "bg-red-100 text-red-700",
+        level === "high" && "bg-orange-100 text-orange-700",
+        level === "normal" && "bg-green-100 text-green-700",
+      )}
+    >
+      {emoji} {priorityBadgeLabel(level)}
+    </span>
+  );
+}
+
+function IssueTypeBadge({ issueType }: { issueType: AiIssueType }) {
+  if (issueType === "NORMAL") return null;
+
+  return (
+    <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+      {formatIssueTypeLabel(issueType)}
+    </span>
+  );
 }
 
 function getCustomerInitials(name: string | null, phone: string): string {
@@ -53,7 +104,10 @@ function getCustomerInitials(name: string | null, phone: string): string {
 }
 
 function getCustomerLabel(name: string | null, phone: string): string {
-  return name?.trim() || phone;
+  const trimmedName = name?.trim();
+  if (trimmedName) return trimmedName;
+  if (phone.startsWith("deleted_")) return phone;
+  return phone;
 }
 
 function formatConversationTime(iso: string): string {
@@ -174,9 +228,9 @@ function AdminMessageBubble({ message }: { message: Message }) {
 
   if (message.sender_type === "customer") {
     return (
-      <div className="ml-auto flex max-w-[75%] flex-col items-end">
-        <div className="rounded-[18px_18px_4px_18px] bg-[#DCF8C6] px-3 py-2 text-gray-900">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">
+      <div className="ml-auto flex w-full max-w-[85%] min-w-0 flex-col items-end sm:max-w-[75%]">
+        <div className="w-full overflow-hidden rounded-[18px_18px_4px_18px] bg-[#DCF8C6] px-3 py-2 text-gray-900">
+          <p className="chat-bubble-content whitespace-pre-wrap text-sm leading-relaxed">
             {message.content}
           </p>
           <div className="mt-0.5 flex items-center justify-end">
@@ -188,14 +242,14 @@ function AdminMessageBubble({ message }: { message: Message }) {
   }
 
   return (
-    <div className="max-w-[75%]">
+    <div className="max-w-[85%] min-w-0 sm:max-w-[75%]">
       {message.was_ai_drafted ? (
         <span className="mb-1 inline-flex rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700">
           🤖 AI Reply
         </span>
       ) : null}
-      <div className="rounded-[18px_18px_18px_4px] bg-white px-3 py-2 text-gray-900 shadow-sm">
-        <p className="whitespace-pre-wrap text-sm leading-relaxed">
+      <div className="overflow-hidden rounded-[18px_18px_18px_4px] bg-white px-3 py-2 text-gray-900 shadow-sm">
+        <p className="chat-bubble-content whitespace-pre-wrap text-sm leading-relaxed">
           {message.content}
         </p>
         <div className="mt-0.5 flex justify-end">
@@ -252,9 +306,14 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
   const [nextBestActionLabel, setNextBestActionLabel] = useState(
     NEXT_BEST_ACTION_LABELS.follow_up_cart.label,
   );
+  const [issueType, setIssueType] = useState<AiIssueType>("NORMAL");
+  const [priorityLevel, setPriorityLevel] = useState<AiPriorityLevel>("normal");
+  const [customerIntent, setCustomerIntent] = useState<string | null>(null);
+  const [suggestedReply, setSuggestedReply] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState(false);
   const [aiToastVisible, setAiToastVisible] = useState(false);
+  const [deletionActionLoading, setDeletionActionLoading] = useState(false);
 
   const messageIdsRef = useRef<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -304,12 +363,14 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
       setSuggestionsLoading(true);
       setSummary(null);
       setDraftSuggestions([]);
+      setCustomerIntent(null);
+      setSuggestedReply(null);
 
       try {
         const summaryResponse = await fetch("/api/ai/summary", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversationId }),
+          body: JSON.stringify({ conversationId, forceRefresh: true }),
         });
 
         if (refreshId !== aiRefreshRef.current) return;
@@ -319,13 +380,27 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
             summary?: string;
             nextBestAction?: string;
             suggestedDrafts?: DraftSuggestion[];
+            issueType?: AiIssueType;
+            priorityLevel?: AiPriorityLevel;
+            customerIntent?: string;
+            suggestedReply?: string;
+            suggestedAction?: string;
           };
           setSummary(summaryData.summary ?? null);
           setDraftSuggestions(summaryData.suggestedDrafts ?? []);
+          setIssueType(summaryData.issueType ?? "NORMAL");
+          setPriorityLevel(summaryData.priorityLevel ?? "normal");
+          setCustomerIntent(summaryData.customerIntent ?? null);
+          setSuggestedReply(summaryData.suggestedReply ?? null);
 
-          if (summaryData.nextBestAction) {
-            setNextBestActionLabel(summaryData.nextBestAction);
-            setNextBestAction(mapNextBestActionLabel(summaryData.nextBestAction));
+          const actionLabel =
+            summaryData.suggestedAction ??
+            summaryData.nextBestAction ??
+            NEXT_BEST_ACTION_LABELS.follow_up_cart.label;
+
+          if (actionLabel) {
+            setNextBestActionLabel(actionLabel);
+            setNextBestAction(mapNextBestActionLabel(actionLabel));
           }
         }
       } catch (loadError) {
@@ -571,6 +646,74 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
     pendingAiDraftRef.current = true;
   }
 
+  const handleDeletionDecision = useCallback(
+    async (action: "approve_deletion" | "reject_deletion") => {
+      if (!activeConversation) return;
+
+      setDeletionActionLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(
+          `/api/admin/customers/${activeConversation.customer_id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action }),
+          },
+        );
+
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(body?.error ?? "Failed to update deletion request");
+        }
+
+        const _result = (await response.json()) as {
+          deletedAt?: string;
+        };
+        void _result;
+
+        setActiveConversation((prev) =>
+          prev
+            ? {
+                ...prev,
+                deletion_status:
+                  action === "approve_deletion" ? "deleted" : null,
+                ...(action === "approve_deletion"
+                  ? {
+                      customer_name: null,
+                      dpdp_consent: false,
+                      dpdp_consent_at: null,
+                    }
+                  : {}),
+              }
+            : prev,
+        );
+
+        if (action === "approve_deletion") {
+          setMessages([]);
+          messageIdsRef.current.clear();
+          setSummary(null);
+          setDraftSuggestions([]);
+        }
+
+        setError(null);
+        void loadConversationList();
+      } catch (decisionError) {
+        setError(
+          decisionError instanceof Error
+            ? decisionError.message
+            : "Failed to process deletion request.",
+        );
+      } finally {
+        setDeletionActionLoading(false);
+      }
+    },
+    [activeConversation, loadConversationList],
+  );
+
   const actionMeta = {
     ...NEXT_BEST_ACTION_LABELS[nextBestAction],
     label: nextBestActionLabel,
@@ -590,9 +733,15 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
       {/* Column 1 — Conversation list */}
-      <aside className="flex w-72 shrink-0 flex-col border-r border-gray-200 bg-white">
+      <aside
+        className={cn(
+          "flex shrink-0 flex-col border-r border-gray-200 bg-white",
+          "w-full md:w-72",
+          customerId ? "hidden md:flex" : "flex",
+        )}
+      >
         <p className="px-4 pb-2 pt-4 text-xs font-semibold uppercase text-gray-400">
           Conversations
         </p>
@@ -653,8 +802,15 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
                       </div>
                     </div>
                     <p className="truncate text-xs text-gray-400">
-                      {conversation.last_message_preview ?? "No messages yet"}
+                      {conversation.ai_summary ??
+                        conversation.last_message_preview ??
+                        "No messages yet"}
                     </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <PriorityBadge level={conversation.ai_priority_level} />
+                      <IssueTypeBadge issueType={conversation.ai_issue_type} />
+                      <ConsentStatusBadge consented={conversation.dpdp_consent} />
+                    </div>
                   </div>
                 </Link>
               );
@@ -664,17 +820,36 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
       </aside>
 
       {/* Column 2 — Chat thread */}
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section
+        className={cn(
+          "flex min-w-0 flex-1 flex-col",
+          !customerId && "hidden md:flex",
+        )}
+      >
         {activeConversation ? (
           <>
-            <div className="flex h-14 shrink-0 items-center border-b border-gray-200 bg-white px-4">
-              <div>
-                <p className="text-base font-semibold text-gray-900">
-                  {getCustomerLabel(
-                    activeConversation.customer_name,
-                    activeConversation.customer_phone,
-                  )}
-                </p>
+            <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-white px-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  {customerId ? (
+                    <Link
+                      href="/admin/chats"
+                      className="inline-flex shrink-0 items-center rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-100 md:hidden"
+                      aria-label="Back to conversations"
+                    >
+                      <ArrowLeft className="size-5" />
+                    </Link>
+                  ) : null}
+                  <p className="truncate text-base font-semibold text-gray-900">
+                    {getCustomerLabel(
+                      activeConversation.customer_name,
+                      activeConversation.customer_phone,
+                    )}
+                  </p>
+                  <ConsentStatusBadge
+                    consented={activeConversation.dpdp_consent}
+                  />
+                </div>
                 <p className="text-sm text-gray-400">
                   {activeConversation.customer_phone}
                 </p>
@@ -731,13 +906,13 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
                   className="h-20 w-full resize-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500 disabled:opacity-60"
                 />
               </div>
-              <div className="mt-2 flex items-center justify-between gap-2">
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 {!aiOffline ? (
                   <button
                     type="button"
                     onClick={() => void handleDraftWithAi()}
                     disabled={drafting || sending}
-                    className="rounded-lg border border-green-500 px-3 py-1.5 text-sm font-medium text-green-600 transition-colors hover:bg-green-50 disabled:opacity-50"
+                    className="w-full rounded-lg border border-green-500 px-3 py-1.5 text-sm font-medium text-green-600 transition-colors hover:bg-green-50 disabled:opacity-50 sm:w-auto"
                   >
                     ✨ Draft with AI
                   </button>
@@ -748,7 +923,7 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
                   type="button"
                   onClick={() => void handleSend()}
                   disabled={!composeText.trim() || drafting || sending}
-                  className="rounded-lg bg-green-500 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-green-600 disabled:opacity-50"
+                  className="w-full rounded-lg bg-green-500 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-green-600 disabled:opacity-50 sm:w-auto"
                 >
                   Send →
                 </button>
@@ -767,11 +942,114 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
         )}
       </section>
 
-      {/* Column 3 — AI Panel */}
-      <aside className="flex w-72 shrink-0 flex-col border-l border-gray-200 bg-white">
+      {/* Column 3 — AI Sidebar */}
+      <aside className="hidden w-72 shrink-0 flex-col border-l border-gray-200 bg-white xl:flex">
+        <div className="border-b border-gray-200 px-4 py-3">
+          <p className="text-xs font-semibold uppercase text-gray-400">
+            AI Operations
+          </p>
+        </div>
         <div className="flex-1 overflow-y-auto">
           {activeConversation ? (
             <div className="space-y-6 p-4">
+              <section>
+                <p className="text-xs font-semibold uppercase text-gray-400">
+                  Consent Status
+                </p>
+                <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-gray-700">DPDP Consent</span>
+                    <ConsentStatusBadge
+                      consented={activeConversation.dpdp_consent}
+                    />
+                  </div>
+                  {activeConversation.dpdp_consent_at ? (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Accepted{" "}
+                      {new Intl.DateTimeFormat("en-IN", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      }).format(new Date(activeConversation.dpdp_consent_at))}
+                    </p>
+                  ) : null}
+                </div>
+              </section>
+
+              {activeConversation.deletion_status === "pending_deletion" ? (
+                <section>
+                  <p className="text-xs font-semibold uppercase text-red-500">
+                    Deletion Request
+                  </p>
+                  <div className="mt-2 space-y-2 rounded-lg border border-red-200 bg-red-50 p-3">
+                    <p className="text-sm text-red-800">
+                      Customer requested data deletion.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={deletionActionLoading}
+                        onClick={() => void handleDeletionDecision("approve_deletion")}
+                        className="flex-1 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletionActionLoading}
+                        onClick={() => void handleDeletionDecision("reject_deletion")}
+                        className="flex-1 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
+
+              {activeConversation.deletion_status === "deleted" ? (
+                <section>
+                  <p className="text-xs font-semibold uppercase text-[#128c7e]">
+                    Deletion Completed
+                  </p>
+                  <div className="mt-2 rounded-lg border border-[#128c7e]/20 bg-[#ecfdf5] p-3">
+                    <p className="text-sm text-[#075e54]">
+                      Personal data has been removed. Chat history cleared and
+                      order records anonymised.
+                    </p>
+                  </div>
+                </section>
+              ) : null}
+
+              <section>
+                <p className="text-xs font-semibold uppercase text-gray-400">
+                  Issue Type
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <IssueTypeBadge issueType={issueType} />
+                  {issueType === "NORMAL" ? (
+                    <span className="text-sm text-gray-600">Normal</span>
+                  ) : null}
+                </div>
+              </section>
+
+              <section>
+                <p className="text-xs font-semibold uppercase text-gray-400">
+                  Priority
+                </p>
+                <div className="mt-2">
+                  <PriorityBadge level={priorityLevel} />
+                </div>
+              </section>
+
+              {customerIntent ? (
+                <section>
+                  <p className="text-xs font-semibold uppercase text-gray-400">
+                    Customer Intent
+                  </p>
+                  <p className="mt-2 text-sm text-gray-700">{customerIntent}</p>
+                </section>
+              ) : null}
+
               {/* Section A — Summary */}
               <section>
                 <button
@@ -785,7 +1063,7 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
                     <ChevronRight className="size-3.5 text-gray-400" />
                   )}
                   <span className="text-xs font-semibold uppercase text-gray-400">
-                    🤖 AI Conversation Summary
+                    Summary
                   </span>
                 </button>
                 {summaryOpen ? (
@@ -805,10 +1083,10 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
                 ) : null}
               </section>
 
-              {/* Section B — Next best action */}
+              {/* Section B — Recommended action */}
               <section>
                 <p className="text-xs font-semibold uppercase text-gray-400">
-                  Next Best Action
+                  Recommended Action
                 </p>
                 <div className="mt-2 flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
                   <NextBestActionIcon action={nextBestAction} />
@@ -818,29 +1096,46 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
                 </div>
               </section>
 
-              {/* Section C — Draft suggestions */}
+              {/* Section C — Draft response */}
               <section>
                 <p className="text-xs font-semibold uppercase text-gray-400">
-                  ✨ Suggest Response Draft
+                  Draft Response
                 </p>
                 <div className="mt-2 space-y-3">
+                  {summaryLoading ? (
+                    <Skeleton className="h-20 w-full rounded-lg" />
+                  ) : suggestedReply ? (
+                    <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                      <p className="text-sm leading-relaxed text-gray-800">
+                        {suggestedReply}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleInsertDraft(suggestedReply)}
+                        className="mt-3 w-full rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-green-700"
+                      >
+                        Use Suggested Reply
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">
+                      No suggested reply yet.
+                    </p>
+                  )}
+
                   {suggestionsLoading ? (
                     <>
                       <Skeleton className="h-16 w-full rounded-lg" />
                       <Skeleton className="h-16 w-full rounded-lg" />
                     </>
-                  ) : draftSuggestions.length === 0 ? (
-                    <p className="text-xs text-gray-500">
-                      No draft suggestions available.
-                    </p>
-                  ) : (
+                  ) : draftSuggestions.length > 0 ? (
                     draftSuggestions.map((draft) => (
                       <div
                         key={draft.label}
                         className="rounded-lg border border-gray-200 bg-gray-50 p-3"
                       >
                         <p className="text-xs text-gray-400">{draft.label}</p>
-                        <p className="mt-1 line-clamp-2 text-xs text-gray-700">
+                        <p className="mt-1 line-clamp-3 text-xs text-gray-700">
                           {draft.text}
                         </p>
                         <button
@@ -848,11 +1143,11 @@ export function AdminChatsView({ customerId }: AdminChatsViewProps) {
                           onClick={() => handleInsertDraft(draft.text)}
                           className="mt-2 rounded bg-green-500 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-green-600"
                         >
-                          INSERT →
+                          Use This Draft
                         </button>
                       </div>
                     ))
-                  )}
+                  ) : null}
                 </div>
               </section>
             </div>
