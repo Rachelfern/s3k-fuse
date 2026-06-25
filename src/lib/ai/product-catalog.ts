@@ -16,6 +16,7 @@ import {
   isOffersQuery,
 } from "@/lib/ai/product-query";
 import {
+  filterProteinRichProducts,
   isHighProteinRecommendationRequest,
   rankHighProteinProducts,
 } from "@/lib/ai/nutrition-recommendations";
@@ -158,11 +159,7 @@ export function searchProductsForQuery(
   }
 
   if (/protein/i.test(normalized)) {
-    const proteinMatches = filtered.filter((product) =>
-      /protein|paneer|dal|rajma|bean|lentil|milk|yogurt|egg|broccoli|chicken|meat|fish/i.test(
-        `${product.name_en} ${product.description ?? ""} ${product.category}`,
-      ),
-    );
+    const proteinMatches = filterProteinRichProducts(filtered);
     if (proteinMatches.length > 0) {
       return rankHighProteinProducts(proteinMatches, 8);
     }
@@ -187,11 +184,13 @@ export function searchProductsForQuery(
   }
 
   if (/\b(?:cook|dinner|lunch|tonight|meal)\b/i.test(normalized)) {
-    const mealMatches = filtered.filter((product) =>
-      /dal|rice|paneer|vegetable|spice|oil|onion|potato|bread|milk|egg|chicken|broccoli/i.test(
-        `${product.name_en} ${product.description ?? ""} ${product.category}`,
-      ),
-    );
+    const mealMatches = isHighProteinRecommendationRequest(normalized)
+      ? filterProteinRichProducts(filtered)
+      : filtered.filter((product) =>
+          /dal|rice|paneer|vegetable|spice|oil|onion|potato|bread|milk|egg|chicken|broccoli/i.test(
+            `${product.name_en} ${product.description ?? ""} ${product.category}`,
+          ),
+        );
     if (mealMatches.length > 0) {
       if (isHighProteinRecommendationRequest(normalized)) {
         return rankHighProteinProducts(mealMatches, 8);

@@ -50,6 +50,13 @@ const catalog = [
     price: 100,
   },
   {
+    id: "eggs",
+    name_en: "Eggs",
+    description: "Farm fresh eggs — high-quality protein",
+    category: "Dairy",
+    price: 60,
+  },
+  {
     id: "mango",
     name_en: "Alphonso Mango",
     description: "Sweet seasonal mangoes",
@@ -69,11 +76,16 @@ test("detects high-protein recommendation queries", () => {
   }
 });
 
-test("ranks chicken before dairy before broccoli; excludes tomatoes", () => {
-  const ranked = rankHighProteinProducts(catalog, 3);
+test("ranks chicken before dairy before eggs before broccoli; excludes tomatoes", () => {
+  const ranked = rankHighProteinProducts(catalog, 4);
   assert.deepEqual(
     ranked.map((product) => product.name_en),
-    ["Chicken Breast 500g", "Farm Fresh Milk 1L", "Broccoli 1pc"],
+    [
+      "Chicken Breast 500g",
+      "Farm Fresh Milk 1L",
+      "Eggs",
+      "Broccoli 1pc",
+    ],
   );
 });
 
@@ -81,7 +93,9 @@ test("never picks tomatoes when chicken is available", () => {
   const ranked = rankHighProteinProducts(catalog, 4);
   const names = ranked.map((product) => product.name_en);
   assert.ok(names.includes("Chicken Breast 500g"));
+  assert.ok(names.includes("Eggs"));
   assert.ok(!names.includes("Tomatoes 500g"));
+  assert.ok(!names.includes("Alphonso Mango"));
 });
 
 test("selectRecommendationProducts uses nutrition ranking for high-protein meal", () => {
@@ -89,24 +103,41 @@ test("selectRecommendationProducts uses nutrition ranking for high-protein meal"
     message: "I want a high protein meal",
     catalog,
     bestSellerIds: ["tomatoes", "broccoli"],
-    limit: 3,
+    limit: 4,
   });
 
   assert.deepEqual(
     picks.map((product) => product.name_en),
-    ["Chicken Breast 500g", "Farm Fresh Milk 1L", "Broccoli 1pc"],
+    [
+      "Chicken Breast 500g",
+      "Farm Fresh Milk 1L",
+      "Eggs",
+      "Broccoli 1pc",
+    ],
   );
 });
 
+test("selectRecommendationProducts includes eggs for high-protein lunch", () => {
+  const picks = selectRecommendationProducts({
+    message: "I want a high protein lunch",
+    catalog,
+    bestSellerIds: ["mango"],
+    limit: 4,
+  });
+
+  assert.ok(picks.some((product) => product.name_en === "Eggs"));
+});
+
 test("builds explanatory intro with estimated total", () => {
-  const ranked = rankHighProteinProducts(catalog, 3);
+  const ranked = rankHighProteinProducts(catalog, 4);
   const intro = buildHighProteinRecommendationIntro(ranked);
 
   assert.match(intro, /For a high-protein meal, I recommend:/);
   assert.match(intro, /🍗 Chicken Breast 500g - excellent protein source/);
   assert.match(intro, /🥛 Farm Fresh Milk 1L - additional protein and calcium/);
+  assert.match(intro, /🥚 Eggs - high-quality complete protein/);
   assert.match(intro, /🥦 Broccoli 1pc - nutritious side dish with plant protein/);
-  assert.match(intro, /Estimated total: ₹204/);
+  assert.match(intro, /Estimated total: ₹264/);
 });
 
 console.log("\nAll nutrition recommendation checks passed.");

@@ -44,6 +44,26 @@ function productText(product: GroundedProduct): string {
   return `${product.name_en} ${product.description ?? ""} ${product.category}`.toLowerCase();
 }
 
+const EGG_PATTERN = /\beggs?\b/i;
+const PROTEIN_RICH_TIERS = new Set<ProteinTier>([
+  "poultry_meat",
+  "dairy",
+  "eggs",
+  "protein_vegetable",
+]);
+
+export function isProteinRichProduct(product: GroundedProduct): boolean {
+  const tier = classifyProteinTier(product);
+  if (PROTEIN_RICH_TIERS.has(tier)) return true;
+  return /\bprotein\b/i.test(productText(product));
+}
+
+export function filterProteinRichProducts(
+  products: GroundedProduct[],
+): GroundedProduct[] {
+  return products.filter(isProteinRichProduct);
+}
+
 export function isHighProteinRecommendationRequest(message: string): boolean {
   return HIGH_PROTEIN_QUERY_PATTERNS.some((pattern) => pattern.test(message));
 }
@@ -55,15 +75,15 @@ export function classifyProteinTier(product: GroundedProduct): ProteinTier {
     return "poultry_meat";
   }
 
+  if (EGG_PATTERN.test(text) || /\begg/i.test(product.category)) {
+    return "eggs";
+  }
+
   if (
     /\bdairy|milk|paneer|yogurt|yoghurt|curd|cheese|lassi|cottage\b/.test(text) ||
     /dairy/i.test(product.category)
   ) {
     return "dairy";
-  }
-
-  if (/\begg\b/.test(text)) {
-    return "eggs";
   }
 
   if (/\bbroccoli|spinach|pea|bean|lentil|dal|rajma|soya|soy|tofu|quinoa\b/.test(text)) {
@@ -158,7 +178,7 @@ function emojiForProduct(product: GroundedProduct, tier: ProteinTier): string {
   if (/\bchicken\b/.test(name)) return "🍗";
   if (/\bmilk\b/.test(name)) return "🥛";
   if (/\bpaneer|cheese|yogurt|yoghurt|curd\b/.test(name)) return "🧀";
-  if (/\begg\b/.test(name)) return "🥚";
+  if (EGG_PATTERN.test(name)) return "🥚";
   if (/\bbroccoli\b/.test(name)) return "🥦";
   if (/\bspinach\b/.test(name)) return "🥬";
   if (/\bfish\b/.test(name)) return "🐟";
